@@ -1,0 +1,45 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "(Edit|Write)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$CLAUDE_FILE_PATHS\" | grep -q '\\.rs$'; then cargo fmt -- $(echo \"$CLAUDE_FILE_PATHS\" | tr ',' ' ') 2>/dev/null; fi",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "(Edit|Write)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "for f in $(echo \"$CLAUDE_FILE_PATHS\" | tr ',' '\\n'); do case \"$f\" in */Cargo.lock|*/.cargo/config.toml) echo \"BLOCKED: $f is a protected file. Do not modify it directly.\"; exit 2;; esac; done",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '## Rust Desktop Session Rules\n\n### Runner Rules\n- Use `cargo` commands (build, run, test, clippy, fmt) — never bare `rustc`\n- Use `cargo run` for running — never compile and run manually\n\n### Protected Files (do NOT modify)\n- `Cargo.lock` — managed by cargo\n- `.cargo/config.toml` — build configuration\n\n### Architecture Rules\n- Platform code ONLY in `src/platform/` — no scattered #[cfg(target_os)]\n- Provider concrete types ONLY in `main.rs` — business logic uses traits\n- GUI communicates via channels — never calls async directly\n- No `block_on()` or `std::thread::sleep()` in async context\n\n### Quality Pipeline\n```bash\ncargo fmt --check && cargo clippy -- -D warnings && cargo test && cargo build --release\n```'",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cargo *)",
+      "Bash(rustup *)"
+    ]
+  }
+}
