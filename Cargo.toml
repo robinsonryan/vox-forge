@@ -2,19 +2,49 @@
 name = "vox-forge"
 version = "0.1.0"
 edition = "2024"
+description = "Cross-platform voice dictation with local STT and cloud formatting"
+license = "MIT"
+
+[features]
+default = []
+cuda = ["whisper-rs/cuda"]
 
 [dependencies]
 anyhow = "1.0.102"
+arboard = "3.4"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5.60", features = ["derive"] }
+cpal = "0.15"
 dirs = "6.0.0"
+eframe = "0.31"
+egui = "0.31"
+enigo = "0.3"
+global-hotkey = "0.6"
+hound = "3.5"
+image = { version = "0.25", default-features = false, features = ["png"] }
+indicatif = "0.17"
+libc = "0.2"
+muda = "0.16"
+notify-rust = "4"
+open = "5"
+regex = "1"
+reqwest = { version = "0.12", features = ["json", "multipart"] }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1"
 thiserror = "2.0.18"
+tokio = { version = "1", features = ["full"] }
 toml = "1.0.3"
 tracing = "0.1.44"
+tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+tray-icon = "0.19"
+whisper-rs = "0.15"
 
 [dev-dependencies]
 mockall = "0.14.0"
+tempfile = "3"
+tokio-test = "0.4"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
