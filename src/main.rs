@@ -124,7 +124,7 @@ async fn main() -> Result<()> {
             handle_devices()?;
         }
         Some(Command::Test { action }) => {
-            handle_test_action(action)?;
+            handle_test_action(action, &config)?;
         }
         Some(Command::Provider { action }) => {
             handle_provider_action(action, &config);
@@ -162,11 +162,29 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
     );
     let correction_log = corrections::CorrectionLog::new(platform.corrections_path());
 
-    // Set up hotkey listener
+    // Set up hotkey listener (skip entirely on Wayland where X11 grab causes fatal abort)
     let (hotkey_tx, hotkey_rx) = tokio::sync::mpsc::unbounded_channel();
-    let hotkey_listener =
-        hotkey::listener::HotkeyListener::new(&config.hotkey.toggle, &config.hotkey.cancel)?;
-    hotkey_listener.listen(hotkey_tx.clone());
+    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
+        || std::env::var("XDG_SESSION_TYPE")
+            .map(|v| v == "wayland")
+            .unwrap_or(false);
+
+    if is_wayland {
+        tracing::warn!("Wayland detected -- global hotkeys not available");
+        tracing::warn!("Use 'voxforge toggle' / 'voxforge cancel' via IPC instead");
+        tracing::warn!("Bind a compositor shortcut to 'voxforge toggle' for keyboard control");
+    } else {
+        match hotkey::listener::HotkeyListener::new(&config.hotkey.toggle, &config.hotkey.cancel) {
+            Ok(listener) => {
+                listener.listen(hotkey_tx.clone());
+                info!("Global hotkeys registered");
+            }
+            Err(e) => {
+                tracing::warn!("Global hotkeys unavailable: {e}");
+                tracing::warn!("Use 'voxforge toggle' / 'voxforge cancel' via IPC instead");
+            }
+        }
+    }
 
     // Set up IPC server (Unix only)
     #[cfg(unix)]
@@ -390,11 +408,19 @@ fn handle_devices() -> Result<()> {
 
 // ─── Test / Diagnostics ─────────────────────────────────────────────
 
-fn handle_test_action(action: TestAction) -> Result<()> {
+fn handle_test_action(action: TestAction, config: &config::Config) -> Result<()> {
     match action {
         TestAction::Mic => {
-            println!("Recording 3 seconds of audio...");
-            let capture = audio::capture::AudioCapture::new(None)?;
+            let device_name = if config.audio.input_device.is_empty() {
+                None
+            } else {
+                Some(config.audio.input_device.as_str())
+            };
+            println!(
+                "Recording 3 seconds of audio (device: {})...",
+                device_name.unwrap_or("default")
+            );
+            let capture = audio::capture::AudioCapture::new(device_name)?;
             let handle = capture.start_recording()?;
             std::thread::sleep(std::time::Duration::from_secs(3));
             let buffer = handle.stop()?;

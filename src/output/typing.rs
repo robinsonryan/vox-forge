@@ -1,9 +1,7 @@
-//! Keystroke-simulation output via [`enigo`].
+//! Keystroke-simulation output via [`enigo`] (X11) or `wtype` (Wayland).
 //!
-//! Types text character-by-character (with an optional inter-key delay) or
-//! falls back to clipboard paste for applications listed in `clipboard_apps`.
-
-use enigo::{Enigo, Keyboard, Settings};
+//! Types text character-by-character or falls back to clipboard paste for
+//! applications listed in `clipboard_apps`.
 
 use crate::error::{Error, Result};
 
@@ -34,30 +32,65 @@ impl TypingOutput {
 impl super::TextOutput for TypingOutput {
     fn output_text(&self, text: &str, app_executable: &str) -> Result<()> {
         if self.should_use_clipboard(app_executable) {
-            // Delegate to clipboard paste for terminal apps
             return super::clipboard::paste_text(text);
         }
 
-        let mut enigo = Enigo::new(&Settings::default())
-            .map_err(|e| Error::Output(format!("Failed to create enigo instance: {e}")))?;
-
-        if self.keystroke_delay_ms == 0 {
-            // Batch typing — send the entire string at once.
-            enigo
-                .text(text)
-                .map_err(|e| Error::Output(format!("Typing failed: {e}")))?;
+        if is_wayland() {
+            type_wayland(text, self.keystroke_delay_ms)
         } else {
-            // Character-by-character with inter-key delay.
-            for ch in text.chars() {
-                enigo
-                    .text(&ch.to_string())
-                    .map_err(|e| Error::Output(format!("Typing char '{ch}' failed: {e}")))?;
-                std::thread::sleep(std::time::Duration::from_millis(self.keystroke_delay_ms));
-            }
+            type_x11(text, self.keystroke_delay_ms)
         }
-
-        Ok(())
     }
+}
+
+fn is_wayland() -> bool {
+    std::env::var("WAYLAND_DISPLAY").is_ok()
+}
+
+/// Type text using `wtype` on Wayland.
+fn type_wayland(text: &str, delay_ms: u64) -> Result<()> {
+    let mut args = Vec::new();
+    if delay_ms > 0 {
+        args.push("-d".to_string());
+        args.push(delay_ms.to_string());
+    }
+    args.push(text.to_string());
+
+    let status = std::process::Command::new("wtype")
+        .args(&args)
+        .status()
+        .map_err(|e| Error::Output(format!("Failed to run wtype: {e}")))?;
+
+    if !status.success() {
+        return Err(Error::Output(
+            "wtype failed — is it installed? (sudo apt install wtype)".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Type text using enigo on X11.
+fn type_x11(text: &str, delay_ms: u64) -> Result<()> {
+    use enigo::{Enigo, Keyboard, Settings};
+
+    let mut enigo = Enigo::new(&Settings::default())
+        .map_err(|e| Error::Output(format!("Failed to create enigo instance: {e}")))?;
+
+    if delay_ms == 0 {
+        enigo
+            .text(text)
+            .map_err(|e| Error::Output(format!("Typing failed: {e}")))?;
+    } else {
+        for ch in text.chars() {
+            enigo
+                .text(&ch.to_string())
+                .map_err(|e| Error::Output(format!("Typing char '{ch}' failed: {e}")))?;
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

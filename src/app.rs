@@ -142,12 +142,14 @@ impl App {
                 match command {
                     DictationCommand::StartRecording => {
                         let _ = crate::notify::notify_recording();
+                        println!("[recording] Started...");
                         match audio_capture.start_recording() {
                             Ok(handle) => {
                                 recording_handle = Some(handle);
                                 recording_start = Some(std::time::Instant::now());
                             }
                             Err(e) => {
+                                println!("[error] Audio capture failed: {e}");
                                 let _ = crate::notify::notify_error(&e.to_string());
                                 self.state_machine
                                     .handle_event(DictationEvent::ErrorOccurred {
@@ -159,10 +161,34 @@ impl App {
                     DictationCommand::StopRecording => {
                         let _ = crate::notify::notify_processing();
                         if let Some(handle) = recording_handle.take() {
+                            let sample_count = handle.sample_count();
                             recording_start = None;
                             match handle.stop() {
                                 Ok(buffer) => {
+                                    // Show audio stats
+                                    let peak = buffer
+                                        .samples
+                                        .iter()
+                                        .map(|s| s.abs())
+                                        .fold(0.0_f32, f32::max);
+                                    #[allow(clippy::cast_possible_truncation)]
+                                    let peak_db = if peak > 0.0 {
+                                        20.0 * peak.log10()
+                                    } else {
+                                        -100.0
+                                    };
+                                    println!(
+                                        "[recording] Stopped. {}ms, {} samples, peak: {peak_db:.1} dB",
+                                        buffer.duration_ms,
+                                        sample_count,
+                                    );
+
+                                    if peak_db <= -90.0 {
+                                        println!("[warning] Audio appears silent — check your mic/device config");
+                                    }
+
                                     if buffer.duration_ms < self.config.audio.min_recording_ms {
+                                        println!("[skipped] Recording too short ({}ms < {}ms minimum)", buffer.duration_ms, self.config.audio.min_recording_ms);
                                         self.state_machine
                                             .handle_event(DictationEvent::RecordingTooShort);
                                     } else {
@@ -204,16 +230,18 @@ impl App {
     /// Process audio through the STT -> LLM -> output pipeline.
     async fn process_audio(&mut self, buffer: crate::audio::capture::AudioBuffer) {
         // Step 1: Transcribe
+        println!("[transcribing] Sending {}ms of audio to Whisper...", buffer.duration_ms);
         let transcript = match self
             .stt
             .transcribe(&buffer.samples, buffer.sample_rate)
             .await
         {
             Ok(result) => {
-                tracing::info!("Transcribed in {}ms: {}", result.duration_ms, result.text);
+                println!("[transcribed] ({}ms) \"{}\"", result.duration_ms, result.text);
                 result.text
             }
             Err(e) => {
+                println!("[error] Transcription failed: {e}");
                 self.state_machine
                     .handle_event(DictationEvent::ErrorOccurred {
                         message: format!("Transcription failed: {e}"),
@@ -228,6 +256,7 @@ impl App {
             });
 
         if transcript.trim().is_empty() {
+            println!("[skipped] Empty transcription");
             return;
         }
 
@@ -245,9 +274,13 @@ impl App {
             &context.executable,
         );
 
+        println!("[formatting] Mode: {mode:?}, app: {}, sending to LLM...", context.app_name);
+
         // Step 3: Format
         let formatted = if mode == FormattingMode::Raw {
-            crate::format::fallback::format_fallback(&transcript)
+            let result = crate::format::fallback::format_fallback(&transcript);
+            println!("[formatted] (fallback) \"{result}\"");
+            result
         } else {
             let corrections_str = self
                 .correction_log
@@ -271,20 +304,26 @@ impl App {
                     .await
                     {
                         Ok(Ok(result)) => {
-                            tracing::info!("Formatted in {}ms", result.duration_ms);
+                            println!("[formatted] ({}ms) \"{}\"", result.duration_ms, result.text);
                             result.text
                         }
                         Ok(Err(e)) => {
-                            tracing::warn!("LLM formatting failed, using fallback: {e}");
+                            println!("[warning] LLM failed: {e}");
+                            println!("[formatted] (fallback)");
                             crate::format::fallback::format_fallback(&transcript)
                         }
                         Err(_) => {
-                            tracing::warn!("LLM formatting timed out, using fallback");
+                            println!("[warning] LLM timed out ({}ms limit)", self.config.formatting.timeout_ms);
+                            println!("[formatted] (fallback)");
                             crate::format::fallback::format_fallback(&transcript)
                         }
                     }
                 }
-                None => crate::format::fallback::format_fallback(&transcript),
+                None => {
+                    let result = crate::format::fallback::format_fallback(&transcript);
+                    println!("[formatted] (fallback) \"{result}\"");
+                    result
+                }
             }
         };
 
@@ -294,15 +333,18 @@ impl App {
             });
 
         // Step 4: Output
+        println!("[typing] Outputting text...");
         match self.output.output_text(&formatted, &context.executable) {
             Ok(()) => {
-                tracing::info!("Output complete");
+                println!("[done] Output complete");
             }
             Err(e) => {
-                tracing::warn!("Typing failed, trying clipboard: {e}");
+                println!("[warning] Typing failed ({e}), trying clipboard...");
                 if let Err(e2) = crate::output::clipboard::paste_text(&formatted) {
-                    tracing::error!("Clipboard fallback also failed: {e2}");
+                    println!("[error] Clipboard also failed: {e2}");
                     let _ = crate::notify::notify_error("Output failed");
+                } else {
+                    println!("[done] Pasted via clipboard");
                 }
             }
         }

@@ -140,8 +140,8 @@ impl SttProvider for OpenAiWhisperProvider {
     }
 
     async fn health_check(&self) -> Result<ProviderHealth> {
-        // Validate API key format (OpenAI keys start with "sk-")
-        if self.api_key.starts_with("sk-") {
+        // Validate API key format (OpenAI keys start with "sk-" or "proj-")
+        if self.api_key.starts_with("sk-") || self.api_key.starts_with("proj-") {
             Ok(ProviderHealth {
                 ready: true,
                 message: format!("API key configured, model: {}", self.model),
@@ -149,8 +149,7 @@ impl SttProvider for OpenAiWhisperProvider {
         } else {
             Ok(ProviderHealth {
                 ready: false,
-                message: "API key does not appear to be a valid OpenAI key (expected 'sk-' prefix)"
-                    .to_string(),
+                message: "API key does not appear to be a valid OpenAI key".to_string(),
             })
         }
     }

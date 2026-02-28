@@ -1,0 +1,17 @@
+[Unit]
+Description=VoxForge voice dictation daemon
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/vox-forge daemon
+Restart=on-failure
+RestartSec=3
+
+# Import user session environment (audio, display, Wayland, dbus)
+ImportCredential=*
+PassEnvironment=DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS PULSE_SERVER
+
+[Install]
+WantedBy=graphical-session.target
