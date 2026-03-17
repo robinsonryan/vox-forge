@@ -140,6 +140,47 @@ impl AudioCapture {
         })
     }
 
+    /// Measure the ambient noise floor by sampling the pre-roll buffer.
+    ///
+    /// Waits for `duration_ms` to let the buffer fill, then computes the RMS
+    /// energy in dB. Returns the noise floor level.
+    pub fn calibrate_noise_floor(&self, duration_ms: u64) -> f32 {
+        // Wait for the buffer to accumulate ambient noise
+        std::thread::sleep(std::time::Duration::from_millis(duration_ms));
+
+        let samples: Vec<f32> = self
+            .state
+            .lock()
+            .map(|s| s.pre_roll.iter().copied().collect())
+            .unwrap_or_default();
+
+        if samples.is_empty() {
+            tracing::warn!("No audio samples captured during calibration");
+            return -40.0;
+        }
+
+        // Compute RMS in 50ms windows and take the median to ignore transient spikes
+        let window_size = (self.native_sample_rate as usize * 50) / 1000;
+        let mut window_dbs: Vec<f32> = samples
+            .chunks(window_size)
+            .filter(|chunk| chunk.len() >= window_size / 2)
+            .map(|chunk| {
+                let sum_sq: f32 = chunk.iter().map(|s| s * s).sum();
+                #[allow(clippy::cast_precision_loss)]
+                let rms = (sum_sq / chunk.len() as f32).sqrt();
+                super::amplitude_to_db(rms)
+            })
+            .collect();
+
+        if window_dbs.is_empty() {
+            tracing::warn!("Not enough audio for calibration");
+            return -40.0;
+        }
+
+        window_dbs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        window_dbs[window_dbs.len() / 2]
+    }
+
     /// List available audio input devices.
     pub fn list_devices() -> Result<Vec<AudioDevice>> {
         let host = cpal::default_host();

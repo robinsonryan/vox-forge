@@ -66,9 +66,24 @@ impl App {
         };
         let audio_capture = AudioCapture::new(device_name, self.config.audio.pre_roll_ms)?;
 
+        // Determine silence threshold: auto-calibrate or use config value
+        #[allow(clippy::cast_possible_truncation)]
+        let silence_threshold_db = if self.config.audio.auto_silence_calibration {
+            tracing::info!("Calibrating silence threshold (2s ambient sample)...");
+            let noise_floor = audio_capture.calibrate_noise_floor(2000);
+            let margin = self.config.audio.silence_margin_db as f32;
+            let calibrated = noise_floor + margin;
+            tracing::info!(
+                "Noise floor: {noise_floor:.1} dB, margin: {margin:.1} dB, threshold: {calibrated:.1} dB"
+            );
+            calibrated
+        } else {
+            self.config.audio.silence_threshold_db as f32
+        };
+
         #[allow(clippy::cast_possible_truncation)]
         let vad = VoiceActivityDetector::new(
-            self.config.audio.silence_threshold_db as f32,
+            silence_threshold_db,
             self.config.audio.silence_timeout_s as f32,
             audio_capture.sample_rate(),
         );

@@ -236,6 +236,12 @@ pub struct AudioConfig {
     #[serde(default = "default_silence_threshold_db")]
     pub silence_threshold_db: f64,
 
+    #[serde(default = "default_true")]
+    pub auto_silence_calibration: bool,
+
+    #[serde(default = "default_silence_margin_db")]
+    pub silence_margin_db: f64,
+
     #[serde(default = "default_min_recording_ms")]
     pub min_recording_ms: u64,
 
@@ -256,6 +262,8 @@ impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             silence_threshold_db: default_silence_threshold_db(),
+            auto_silence_calibration: true,
+            silence_margin_db: default_silence_margin_db(),
             min_recording_ms: default_min_recording_ms(),
             max_recording_s: default_max_recording_s(),
             silence_timeout_s: default_silence_timeout_s(),
@@ -469,6 +477,10 @@ fn default_chat_apps() -> Vec<String> {
 
 fn default_silence_threshold_db() -> f64 {
     -40.0
+}
+
+fn default_silence_margin_db() -> f64 {
+    10.0
 }
 
 fn default_min_recording_ms() -> u64 {
