@@ -1,7 +1,7 @@
 //! Linux implementation of the [`Platform`] trait.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
@@ -63,7 +63,7 @@ fn get_uid() -> u32 {
 }
 
 /// Ensure a directory exists, creating it (and parents) if necessary.
-fn ensure_dir(path: &PathBuf) -> Result<()> {
+fn ensure_dir(path: &Path) -> Result<()> {
     if !path.exists() {
         fs::create_dir_all(path)?;
     }
@@ -77,40 +77,54 @@ fn is_pid_alive(pid: u32) -> bool {
 
 impl Platform for LinuxPlatform {
     fn config_dir(&self) -> PathBuf {
-        let _ = ensure_dir(&self.config);
+        if let Err(e) = ensure_dir(&self.config) {
+            tracing::warn!("Failed to create {}: {e}", self.config.display());
+        }
         self.config.clone()
     }
 
     fn data_dir(&self) -> PathBuf {
-        let _ = ensure_dir(&self.data);
+        if let Err(e) = ensure_dir(&self.data) {
+            tracing::warn!("Failed to create {}: {e}", self.data.display());
+        }
         self.data.clone()
     }
 
     fn cache_dir(&self) -> PathBuf {
-        let _ = ensure_dir(&self.cache);
+        if let Err(e) = ensure_dir(&self.cache) {
+            tracing::warn!("Failed to create {}: {e}", self.cache.display());
+        }
         self.cache.clone()
     }
 
     fn runtime_dir(&self) -> Option<PathBuf> {
-        if let Some(ref dir) = self.runtime {
-            let _ = ensure_dir(dir);
+        if let Some(ref dir) = self.runtime
+            && let Err(e) = ensure_dir(dir)
+        {
+            tracing::warn!("Failed to create {}: {e}", dir.display());
         }
         self.runtime.clone()
     }
 
     fn models_dir(&self) -> PathBuf {
         let dir = self.data.join("models");
-        let _ = ensure_dir(&dir);
+        if let Err(e) = ensure_dir(&dir) {
+            tracing::warn!("Failed to create {}: {e}", dir.display());
+        }
         dir
     }
 
     fn corrections_path(&self) -> PathBuf {
-        let _ = ensure_dir(&self.data);
+        if let Err(e) = ensure_dir(&self.data) {
+            tracing::warn!("Failed to create {}: {e}", self.data.display());
+        }
         self.data.join("corrections.jsonl")
     }
 
     fn log_path(&self) -> PathBuf {
-        let _ = ensure_dir(&self.data);
+        if let Err(e) = ensure_dir(&self.data) {
+            tracing::warn!("Failed to create {}: {e}", self.data.display());
+        }
         self.data.join("voxforge.log")
     }
 

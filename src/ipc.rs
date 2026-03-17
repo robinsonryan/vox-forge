@@ -25,7 +25,7 @@ pub struct IpcResponse {
 /// Platform-specific IPC implementation using Unix domain sockets.
 #[cfg(unix)]
 mod unix {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{UnixListener, UnixStream};
@@ -85,7 +85,7 @@ mod unix {
         }
 
         /// Get the socket path.
-        pub fn socket_path(&self) -> &PathBuf {
+        pub fn socket_path(&self) -> &Path {
             &self.socket_path
         }
     }
@@ -138,7 +138,7 @@ mod unix {
     }
 
     /// IPC Client -- sends a command to the running daemon.
-    pub async fn send_command(socket_path: &PathBuf, command: IpcCommand) -> Result<IpcResponse> {
+    pub async fn send_command(socket_path: &Path, command: IpcCommand) -> Result<IpcResponse> {
         let stream = UnixStream::connect(socket_path).await.map_err(|e| {
             Error::Ipc(format!(
                 "Cannot connect to daemon at {}: {e}. Is the daemon running?",

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::config::AutoRulesConfig;
 
 /// Formatting modes that determine which prompt template to use.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormattingMode {
     /// General-purpose dictation cleanup.
     Standard,

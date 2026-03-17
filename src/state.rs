@@ -71,12 +71,6 @@ pub enum DictationCommand {
     StartRecording,
     /// Stop capturing audio.
     StopRecording,
-    /// Transcribe the captured audio.
-    Transcribe,
-    /// Format the transcript via LLM.
-    Format { transcript: String },
-    /// Output the formatted text at cursor.
-    OutputText { text: String },
     /// Show a notification.
     Notify { message: String },
     /// Log an error and return to idle.
@@ -121,14 +115,17 @@ impl DictationStateMachine {
                 DictationState::Transcribing,
                 DictationCommand::StopRecording,
             ),
-            (DictationState::Recording, DictationEvent::RecordingTooShort) => (
+            (
+                DictationState::Recording | DictationState::Transcribing,
+                DictationEvent::RecordingTooShort,
+            ) => (
                 DictationState::Idle,
                 DictationCommand::Notify {
                     message: "Recording too short".to_string(),
                 },
             ),
             (DictationState::Recording, DictationEvent::RecordingComplete { .. }) => {
-                (DictationState::Transcribing, DictationCommand::Transcribe)
+                (DictationState::Transcribing, DictationCommand::None)
             }
 
             // === TRANSCRIBING state ===
@@ -141,18 +138,14 @@ impl DictationStateMachine {
                         },
                     )
                 } else {
-                    (
-                        DictationState::Formatting,
-                        DictationCommand::Format { transcript: text },
-                    )
+                    (DictationState::Formatting, DictationCommand::None)
                 }
             }
 
             // === FORMATTING state ===
-            (DictationState::Formatting, DictationEvent::FormattingComplete { text }) => (
-                DictationState::Typing,
-                DictationCommand::OutputText { text },
-            ),
+            (DictationState::Formatting, DictationEvent::FormattingComplete { .. }) => {
+                (DictationState::Typing, DictationCommand::None)
+            }
 
             // === Cancel from recording, transcribing, or formatting ===
             (
@@ -334,7 +327,7 @@ mod tests {
         sm.handle_event(DictationEvent::HotkeyPressed);
         let cmd = sm.handle_event(DictationEvent::RecordingComplete { duration_ms: 1500 });
         assert_eq!(*sm.state(), DictationState::Transcribing);
-        assert_eq!(cmd, DictationCommand::Transcribe);
+        assert_eq!(cmd, DictationCommand::None);
     }
 
     // --- TRANSCRIBING transitions ---
@@ -348,12 +341,7 @@ mod tests {
             text: "hello world".to_string(),
         });
         assert_eq!(*sm.state(), DictationState::Formatting);
-        assert_eq!(
-            cmd,
-            DictationCommand::Format {
-                transcript: "hello world".to_string()
-            }
-        );
+        assert_eq!(cmd, DictationCommand::None);
     }
 
     #[test]
@@ -402,10 +390,21 @@ mod tests {
             text: "Hello.".to_string(),
         });
         assert_eq!(*sm.state(), DictationState::Typing);
+        assert_eq!(cmd, DictationCommand::None);
+    }
+
+    #[test]
+    fn transcribing_recording_too_short_returns_to_idle() {
+        let mut sm = new_machine();
+        sm.handle_event(DictationEvent::HotkeyPressed);
+        sm.handle_event(DictationEvent::HotkeyReleased);
+        assert_eq!(*sm.state(), DictationState::Transcribing);
+        let cmd = sm.handle_event(DictationEvent::RecordingTooShort);
+        assert_eq!(*sm.state(), DictationState::Idle);
         assert_eq!(
             cmd,
-            DictationCommand::OutputText {
-                text: "Hello.".to_string()
+            DictationCommand::Notify {
+                message: "Recording too short".to_string()
             }
         );
     }
@@ -593,24 +592,14 @@ mod tests {
         let cmd = sm.handle_event(DictationEvent::TranscriptionComplete {
             text: "hello world".to_string(),
         });
-        assert_eq!(
-            cmd,
-            DictationCommand::Format {
-                transcript: "hello world".to_string()
-            }
-        );
+        assert_eq!(cmd, DictationCommand::None);
         assert_eq!(*sm.state(), DictationState::Formatting);
 
         // Formatting completes
         let cmd = sm.handle_event(DictationEvent::FormattingComplete {
             text: "Hello, world.".to_string(),
         });
-        assert_eq!(
-            cmd,
-            DictationCommand::OutputText {
-                text: "Hello, world.".to_string()
-            }
-        );
+        assert_eq!(cmd, DictationCommand::None);
         assert_eq!(*sm.state(), DictationState::Typing);
 
         // Output completes

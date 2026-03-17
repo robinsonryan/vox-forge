@@ -133,17 +133,24 @@ pub struct RecordingHandle {
 }
 
 impl RecordingHandle {
-    /// Get a snapshot of current samples (useful for VAD processing).
-    pub fn current_samples(&self) -> Vec<f32> {
-        self.buffer.lock().map(|b| b.clone()).unwrap_or_default()
+    /// Get a snapshot of the most recent samples for VAD processing.
+    ///
+    /// Only copies the last `max_samples` samples instead of the entire buffer,
+    /// avoiding O(n) clones on every poll for long recordings.
+    pub fn tail_samples(&self, max_samples: usize) -> Vec<f32> {
+        self.buffer
+            .lock()
+            .map(|b| {
+                let start = b.len().saturating_sub(max_samples);
+                b[start..].to_vec()
+            })
+            .unwrap_or_default()
     }
 
     /// Stop recording and return the audio buffer resampled to 16 kHz.
     pub fn stop(self) -> Result<AudioBuffer> {
         self.recording.store(false, Ordering::Relaxed);
-        // Small delay so the stream callback can observe the flag.
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
+        // Lock guarantees any in-progress callback has finished writing.
         let samples = self
             .buffer
             .lock()

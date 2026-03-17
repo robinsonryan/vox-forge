@@ -119,7 +119,13 @@ impl App {
                 Err(_) => {
                     // Timeout -- check VAD if currently recording
                     if let Some((handle, start)) = &recording {
-                        let samples = handle.current_samples();
+                        // Only copy enough samples for the VAD's silence
+                        // timeout window plus 1 second of margin.
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let vad_window_samples = ((self.config.audio.silence_timeout_s + 1.0)
+                            * f64::from(audio_capture.sample_rate()))
+                            as usize;
+                        let samples = handle.tail_samples(vad_window_samples);
                         let elapsed = start.elapsed();
                         let vad_result = vad.analyze(&samples, elapsed);
 
@@ -221,12 +227,7 @@ impl App {
                         tracing::error!("Error: {message}");
                         crate::notify::notify_error(&message);
                     }
-                    DictationCommand::None
-                    | DictationCommand::Transcribe
-                    | DictationCommand::Format { .. }
-                    | DictationCommand::OutputText { .. } => {
-                        // These are handled inline by the process_audio pipeline
-                    }
+                    DictationCommand::None => {}
                 }
             }
         }

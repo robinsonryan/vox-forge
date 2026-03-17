@@ -53,14 +53,12 @@ impl super::TextOutput for TypingOutput {
             type_x11(text, self.keystroke_delay_ms)?;
         }
 
-        if self.auto_enter && self.auto_enter_delay_ms > 0 {
-            if wait_for_escape(self.auto_enter_delay_ms) {
+        if self.auto_enter {
+            if self.auto_enter_delay_ms > 0 && wait_for_escape(self.auto_enter_delay_ms) {
                 tracing::info!("Auto-enter cancelled by Escape");
             } else {
                 send_enter()?;
             }
-        } else if self.auto_enter {
-            send_enter()?;
         }
 
         Ok(())

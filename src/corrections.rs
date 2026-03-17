@@ -66,7 +66,7 @@ impl CorrectionLog {
                 self.write_all(&entries)?;
                 Ok(())
             }
-            None => Err(Error::Dictionary(format!(
+            None => Err(Error::Corrections(format!(
                 "No matching dictation found for: '{original}'"
             ))),
         }

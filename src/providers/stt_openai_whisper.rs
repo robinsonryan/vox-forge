@@ -1,11 +1,11 @@
 //! `OpenAI` Whisper API STT provider.
 
-use std::io::Cursor;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use crate::audio::capture::AudioBuffer;
 use crate::error::{Error, Result};
 
 use super::stt::{ModelInfo, ProviderHealth, SttProvider, TranscriptionResult};
@@ -52,28 +52,12 @@ impl SttProvider for OpenAiWhisperProvider {
         let start = Instant::now();
 
         // Encode audio samples to WAV bytes in memory.
-        let spec = hound::WavSpec {
-            channels: 1,
+        let audio_buffer = AudioBuffer {
+            samples: audio.to_vec(),
             sample_rate,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
+            duration_ms: (audio.len() as u64 * 1000) / u64::from(sample_rate),
         };
-        let mut cursor = Cursor::new(Vec::new());
-        {
-            let mut writer = hound::WavWriter::new(&mut cursor, spec)
-                .map_err(|e| Error::Audio(format!("failed to create WAV writer: {e}")))?;
-            for &sample in audio {
-                #[allow(clippy::cast_possible_truncation)]
-                let s = (sample * 32_767.0).clamp(-32_768.0, 32_767.0) as i16;
-                writer
-                    .write_sample(s)
-                    .map_err(|e| Error::Audio(format!("failed to write WAV sample: {e}")))?;
-            }
-            writer
-                .finalize()
-                .map_err(|e| Error::Audio(format!("failed to finalize WAV: {e}")))?;
-        }
-        let wav_bytes = cursor.into_inner();
+        let wav_bytes = audio_buffer.to_wav_bytes()?;
 
         // Build multipart form.
         let file_part = reqwest::multipart::Part::bytes(wav_bytes)

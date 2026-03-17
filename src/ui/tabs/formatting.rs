@@ -45,7 +45,7 @@ pub fn draw(ui: &mut Ui, config: &mut Config, state: &mut FormattingTabState) {
         egui::ComboBox::from_label("Default mode")
             .selected_text(&config.formatting.default_mode)
             .show_ui(ui, |ui| {
-                for mode in &["auto", "code", "email", "chat", "prose", "raw"] {
+                for mode in &["auto", "code", "email", "chat", "raw"] {
                     ui.selectable_value(
                         &mut config.formatting.default_mode,
                         (*mode).to_string(),

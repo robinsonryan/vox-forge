@@ -36,6 +36,9 @@ pub enum Error {
     #[error("Dictionary error: {0}")]
     Dictionary(String),
 
+    #[error("Corrections error: {0}")]
+    Corrections(String),
+
     #[error("Network error: {0}")]
     Network(#[from] reqwest::Error),
 
