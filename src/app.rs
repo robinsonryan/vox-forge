@@ -73,7 +73,7 @@ impl App {
         );
 
         let is_push_to_talk = self.config.hotkey.mode == HotkeyMode::PushToTalk;
-        let _ = crate::notify::notify_ready();
+        crate::notify::notify_ready();
 
         tracing::info!(
             "Daemon running. Mode: {}. Press hotkey to dictate.",
@@ -89,72 +89,74 @@ impl App {
 
         loop {
             // Process hotkey events with a timeout so we can poll VAD
-            let event =
-                match tokio::time::timeout(std::time::Duration::from_millis(100), hotkey_rx.recv())
-                    .await
-                {
-                    Ok(Some(hotkey_event)) => {
-                        let dictation_event = match hotkey_event {
-                            HotkeyEvent::TogglePressed => {
-                                if is_push_to_talk {
-                                    DictationEvent::HotkeyPressed
-                                } else {
-                                    DictationEvent::HotkeyToggle
-                                }
-                            }
-                            HotkeyEvent::ToggleReleased => {
-                                if is_push_to_talk {
-                                    DictationEvent::HotkeyReleased
-                                } else {
-                                    continue; // Ignore release in toggle mode
-                                }
-                            }
-                            HotkeyEvent::CancelPressed => DictationEvent::CancelPressed,
-                        };
-                        Some(dictation_event)
-                    }
-                    Ok(None) => break, // Channel closed
-                    Err(_) => {
-                        // Timeout -- check VAD if currently recording
-                        if let (Some(handle), Some(start)) = (&recording_handle, &recording_start) {
-                            let samples = handle.current_samples();
-                            let elapsed = start.elapsed();
-                            let vad_result = vad.analyze(&samples, elapsed);
-
-                            // Log VAD state every ~1 second (every 10th poll)
-                            let poll_count = (elapsed.as_millis() / 100) as u64;
-                            if poll_count % 10 == 0 {
-                                tracing::debug!(
-                                    "VAD: current={:.1}dB, peak={:.1}dB, silence={:?}, should_stop={}, samples={}",
-                                    vad_result.current_db,
-                                    vad_result.peak_db,
-                                    vad_result.silence_duration,
-                                    vad_result.should_stop,
-                                    samples.len(),
-                                );
-                            }
-
-                            if vad_result.should_stop {
-                                Some(DictationEvent::SilenceTimeout)
-                            } else if elapsed
-                                >= std::time::Duration::from_secs(self.config.audio.max_recording_s)
-                            {
-                                Some(DictationEvent::MaxDurationReached)
+            let event = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                hotkey_rx.recv(),
+            )
+            .await
+            {
+                Ok(Some(hotkey_event)) => {
+                    let dictation_event = match hotkey_event {
+                        HotkeyEvent::TogglePressed => {
+                            if is_push_to_talk {
+                                DictationEvent::HotkeyPressed
                             } else {
-                                None
+                                DictationEvent::HotkeyToggle
                             }
+                        }
+                        HotkeyEvent::ToggleReleased => {
+                            if is_push_to_talk {
+                                DictationEvent::HotkeyReleased
+                            } else {
+                                continue; // Ignore release in toggle mode
+                            }
+                        }
+                        HotkeyEvent::CancelPressed => DictationEvent::CancelPressed,
+                    };
+                    Some(dictation_event)
+                }
+                Ok(None) => break, // Channel closed
+                Err(_) => {
+                    // Timeout -- check VAD if currently recording
+                    if let (Some(handle), Some(start)) = (&recording_handle, &recording_start) {
+                        let samples = handle.current_samples();
+                        let elapsed = start.elapsed();
+                        let vad_result = vad.analyze(&samples, elapsed);
+
+                        // Log VAD state every ~1 second (every 10th poll)
+                        let poll_count = elapsed.as_millis() / 100;
+                        if poll_count.is_multiple_of(10) {
+                            tracing::debug!(
+                                "VAD: current={:.1}dB, peak={:.1}dB, silence={:?}, should_stop={}, samples={}",
+                                vad_result.current_db,
+                                vad_result.peak_db,
+                                vad_result.silence_duration,
+                                vad_result.should_stop,
+                                samples.len(),
+                            );
+                        }
+
+                        if vad_result.should_stop {
+                            Some(DictationEvent::SilenceTimeout)
+                        } else if elapsed
+                            >= std::time::Duration::from_secs(self.config.audio.max_recording_s)
+                        {
+                            Some(DictationEvent::MaxDurationReached)
                         } else {
                             None
                         }
+                    } else {
+                        None
                     }
-                };
+                }
+            };
 
             if let Some(event) = event {
                 let command = self.state_machine.handle_event(event);
 
                 match command {
                     DictationCommand::StartRecording => {
-                        let _ = crate::notify::notify_recording();
+                        crate::notify::notify_recording();
                         println!("[recording] Started...");
                         match audio_capture.start_recording() {
                             Ok(handle) => {
@@ -163,7 +165,7 @@ impl App {
                             }
                             Err(e) => {
                                 println!("[error] Audio capture failed: {e}");
-                                let _ = crate::notify::notify_error(&e.to_string());
+                                crate::notify::notify_error(&e.to_string());
                                 self.state_machine
                                     .handle_event(DictationEvent::ErrorOccurred {
                                         message: e.to_string(),
@@ -172,7 +174,7 @@ impl App {
                         }
                     }
                     DictationCommand::StopRecording => {
-                        let _ = crate::notify::notify_processing();
+                        crate::notify::notify_processing();
                         if let Some(handle) = recording_handle.take() {
                             let sample_count = handle.sample_count();
                             recording_start = None;
@@ -192,16 +194,20 @@ impl App {
                                     };
                                     println!(
                                         "[recording] Stopped. {}ms, {} samples, peak: {peak_db:.1} dB",
-                                        buffer.duration_ms,
-                                        sample_count,
+                                        buffer.duration_ms, sample_count,
                                     );
 
                                     if peak_db <= -90.0 {
-                                        println!("[warning] Audio appears silent — check your mic/device config");
+                                        println!(
+                                            "[warning] Audio appears silent — check your mic/device config"
+                                        );
                                     }
 
                                     if buffer.duration_ms < self.config.audio.min_recording_ms {
-                                        println!("[skipped] Recording too short ({}ms < {}ms minimum)", buffer.duration_ms, self.config.audio.min_recording_ms);
+                                        println!(
+                                            "[skipped] Recording too short ({}ms < {}ms minimum)",
+                                            buffer.duration_ms, self.config.audio.min_recording_ms
+                                        );
                                         self.state_machine
                                             .handle_event(DictationEvent::RecordingTooShort);
                                     } else {
@@ -210,7 +216,7 @@ impl App {
                                     }
                                 }
                                 Err(e) => {
-                                    let _ = crate::notify::notify_error(&e.to_string());
+                                    crate::notify::notify_error(&e.to_string());
                                     self.state_machine.handle_event(
                                         DictationEvent::ErrorOccurred {
                                             message: e.to_string(),
@@ -221,11 +227,11 @@ impl App {
                         }
                     }
                     DictationCommand::Notify { message } => {
-                        let _ = crate::notify::notify("VoxForge", &message);
+                        crate::notify::notify("VoxForge", &message);
                     }
                     DictationCommand::HandleError { message } => {
                         tracing::error!("Error: {message}");
-                        let _ = crate::notify::notify_error(&message);
+                        crate::notify::notify_error(&message);
                     }
                     DictationCommand::None
                     | DictationCommand::Transcribe
@@ -243,30 +249,9 @@ impl App {
     /// Process audio through the STT -> LLM -> output pipeline.
     async fn process_audio(&mut self, buffer: crate::audio::capture::AudioBuffer) {
         // Step 1: Transcribe
-        println!("[transcribing] Sending {}ms of audio to Whisper...", buffer.duration_ms);
-        let transcript = match self
-            .stt
-            .transcribe(&buffer.samples, buffer.sample_rate)
-            .await
-        {
-            Ok(result) => {
-                println!("[transcribed] ({}ms) \"{}\"", result.duration_ms, result.text);
-                result.text
-            }
-            Err(e) => {
-                println!("[error] Transcription failed: {e}");
-                self.state_machine
-                    .handle_event(DictationEvent::ErrorOccurred {
-                        message: format!("Transcription failed: {e}"),
-                    });
-                return;
-            }
+        let Some(transcript) = self.transcribe(&buffer).await else {
+            return;
         };
-
-        self.state_machine
-            .handle_event(DictationEvent::TranscriptionComplete {
-                text: transcript.clone(),
-            });
 
         if transcript.trim().is_empty() {
             println!("[skipped] Empty transcription");
@@ -287,58 +272,13 @@ impl App {
             &context.executable,
         );
 
-        println!("[formatting] Mode: {mode:?}, app: {}, sending to LLM...", context.app_name);
+        println!(
+            "[formatting] Mode: {mode:?}, app: {}, sending to LLM...",
+            context.app_name
+        );
 
         // Step 3: Format
-        let formatted = if mode == FormattingMode::Raw {
-            let result = crate::format::fallback::format_fallback(&transcript);
-            println!("[formatted] (fallback) \"{result}\"");
-            result
-        } else {
-            let corrections_str = self
-                .correction_log
-                .format_for_prompt(self.config.corrections.max_examples)
-                .unwrap_or_default();
-
-            let system_prompt = prompt::build_system_prompt(
-                &mode,
-                &context.app_name,
-                &context.window_title,
-                &self.config.dictionary.custom_terms,
-                &corrections_str,
-            );
-
-            match system_prompt {
-                Some(prompt_text) => {
-                    match tokio::time::timeout(
-                        std::time::Duration::from_millis(self.config.formatting.timeout_ms),
-                        self.llm.format(&prompt_text, &transcript),
-                    )
-                    .await
-                    {
-                        Ok(Ok(result)) => {
-                            println!("[formatted] ({}ms) \"{}\"", result.duration_ms, result.text);
-                            result.text
-                        }
-                        Ok(Err(e)) => {
-                            println!("[warning] LLM failed: {e}");
-                            println!("[formatted] (fallback)");
-                            crate::format::fallback::format_fallback(&transcript)
-                        }
-                        Err(_) => {
-                            println!("[warning] LLM timed out ({}ms limit)", self.config.formatting.timeout_ms);
-                            println!("[formatted] (fallback)");
-                            crate::format::fallback::format_fallback(&transcript)
-                        }
-                    }
-                }
-                None => {
-                    let result = crate::format::fallback::format_fallback(&transcript);
-                    println!("[formatted] (fallback) \"{result}\"");
-                    result
-                }
-            }
-        };
+        let formatted = self.format_transcript(&transcript, &mode, &context).await;
 
         self.state_machine
             .handle_event(DictationEvent::FormattingComplete {
@@ -346,16 +286,114 @@ impl App {
             });
 
         // Step 4: Output
+        self.output_text(&formatted, &context.executable);
+
+        // Log the dictation for corrections
+        let _ = self
+            .correction_log
+            .log_dictation(&transcript, &formatted, &context.app_name);
+    }
+
+    async fn transcribe(&mut self, buffer: &crate::audio::capture::AudioBuffer) -> Option<String> {
+        println!(
+            "[transcribing] Sending {}ms of audio to Whisper...",
+            buffer.duration_ms
+        );
+        match self
+            .stt
+            .transcribe(&buffer.samples, buffer.sample_rate)
+            .await
+        {
+            Ok(result) => {
+                println!(
+                    "[transcribed] ({}ms) \"{}\"",
+                    result.duration_ms, result.text
+                );
+                self.state_machine
+                    .handle_event(DictationEvent::TranscriptionComplete {
+                        text: result.text.clone(),
+                    });
+                Some(result.text)
+            }
+            Err(e) => {
+                println!("[error] Transcription failed: {e}");
+                self.state_machine
+                    .handle_event(DictationEvent::ErrorOccurred {
+                        message: format!("Transcription failed: {e}"),
+                    });
+                None
+            }
+        }
+    }
+
+    async fn format_transcript(
+        &self,
+        transcript: &str,
+        mode: &FormattingMode,
+        context: &crate::context::AppContext,
+    ) -> String {
+        if *mode == FormattingMode::Raw {
+            let result = crate::format::fallback::format_fallback(transcript);
+            println!("[formatted] (fallback) \"{result}\"");
+            return result;
+        }
+
+        let corrections_str = self
+            .correction_log
+            .format_for_prompt(self.config.corrections.max_examples)
+            .unwrap_or_default();
+
+        let system_prompt = prompt::build_system_prompt(
+            mode,
+            &context.app_name,
+            &context.window_title,
+            &self.config.dictionary.custom_terms,
+            &corrections_str,
+        );
+
+        if let Some(prompt_text) = system_prompt {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(self.config.formatting.timeout_ms),
+                self.llm.format(&prompt_text, transcript),
+            )
+            .await
+            {
+                Ok(Ok(result)) => {
+                    println!("[formatted] ({}ms) \"{}\"", result.duration_ms, result.text);
+                    result.text
+                }
+                Ok(Err(e)) => {
+                    println!("[warning] LLM failed: {e}");
+                    println!("[formatted] (fallback)");
+                    crate::format::fallback::format_fallback(transcript)
+                }
+                Err(_) => {
+                    println!(
+                        "[warning] LLM timed out ({}ms limit)",
+                        self.config.formatting.timeout_ms
+                    );
+                    println!("[formatted] (fallback)");
+                    crate::format::fallback::format_fallback(transcript)
+                }
+            }
+        } else {
+            let result = crate::format::fallback::format_fallback(transcript);
+            println!("[formatted] (fallback) \"{result}\"");
+            result
+        }
+    }
+
+    fn output_text(&mut self, formatted: &str, executable: &str) {
         println!("[typing] Outputting text...");
-        match self.output.output_text(&formatted, &context.executable) {
+        match self.output.output_text(formatted, executable) {
             Ok(()) => {
                 println!("[done] Output complete");
             }
             Err(e) => {
                 println!("[warning] Typing failed ({e}), trying clipboard...");
-                if let Err(e2) = crate::output::clipboard::paste_text(&formatted) {
+                if let Err(e2) = crate::output::clipboard::paste_text(formatted) {
                     println!("[error] Clipboard also failed: {e2}");
-                    let _ = crate::notify::notify_error("Output failed");
+                    crate::notify::notify_error("Output failed");
                 } else {
                     println!("[done] Pasted via clipboard");
                 }
@@ -364,11 +402,6 @@ impl App {
 
         self.state_machine
             .handle_event(DictationEvent::OutputComplete);
-
-        // Log the dictation for corrections
-        let _ = self
-            .correction_log
-            .log_dictation(&transcript, &formatted, &context.app_name);
     }
 }
 

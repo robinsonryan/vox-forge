@@ -140,6 +140,9 @@ async fn main() -> Result<()> {
 // ─── Daemon ─────────────────────────────────────────────────────────
 
 async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform>) -> Result<()> {
+    // Prevent multiple daemon instances
+    let _lock = platform.daemon_lock()?;
+
     // Report permission issues
     for issue in &platform.check_permissions() {
         tracing::warn!("{}: {}", issue.component, issue.message);
@@ -188,28 +191,33 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
         }
     }
 
-    // Set up system tray
+    spawn_tray(hotkey_tx.clone()).await;
+    spawn_ipc(platform.as_ref(), hotkey_tx.clone());
+
+    // Create and run the app
+    let mut app = app::App::new(config, stt, llm, window_detector, output, correction_log);
+    app.run_daemon(hotkey_rx).await?;
+
+    Ok(())
+}
+
+// ─── Daemon subsystem helpers ────────────────────────────────────────
+
+async fn spawn_tray(hotkey_tx: tokio::sync::mpsc::UnboundedSender<hotkey::listener::HotkeyEvent>) {
     match ui::tray::spawn_tray().await {
         Ok((mut tray_rx, _tray_handle)) => {
             info!("System tray icon created");
 
-            let hotkey_tx_tray = hotkey_tx.clone();
-            let settings_config = config.clone();
             tokio::spawn(async move {
                 while let Some(action) = tray_rx.recv().await {
                     match action {
                         ui::tray::TrayAction::ToggleRecording => {
-                            let _ = hotkey_tx_tray.send(hotkey::listener::HotkeyEvent::TogglePressed);
+                            let _ = hotkey_tx.send(hotkey::listener::HotkeyEvent::TogglePressed);
                         }
                         ui::tray::TrayAction::OpenSettings => {
-                            // Launch settings as a separate process to avoid
-                            // winit's "EventLoop can't be recreated" limitation.
                             let exe = std::env::current_exe().unwrap_or_default();
                             tracing::info!("Opening settings via: {}", exe.display());
-                            match std::process::Command::new(&exe)
-                                .arg("settings")
-                                .spawn()
-                            {
+                            match std::process::Command::new(&exe).arg("settings").spawn() {
                                 Ok(child) => {
                                     tracing::info!("Settings process spawned: pid {}", child.id());
                                 }
@@ -220,7 +228,6 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
                         }
                         ui::tray::TrayAction::Quit => {
                             info!("Quit requested from tray");
-                            drop(hotkey_tx_tray);
                             return;
                         }
                     }
@@ -231,8 +238,13 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
             tracing::warn!("System tray unavailable: {e}");
         }
     }
+}
 
-    // Set up IPC server (Unix only)
+#[allow(unused_variables)]
+fn spawn_ipc(
+    platform: &dyn platform::Platform,
+    hotkey_tx: tokio::sync::mpsc::UnboundedSender<hotkey::listener::HotkeyEvent>,
+) {
     #[cfg(unix)]
     {
         let ipc_socket = platform.ipc_socket_path();
@@ -245,32 +257,23 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
             }
         });
 
-        // Forward IPC commands to hotkey events
-        let hotkey_tx_ipc = hotkey_tx.clone();
         tokio::spawn(async move {
             while let Some(cmd) = ipc_rx.recv().await {
                 let event = match cmd {
                     ipc::IpcCommand::Toggle => Some(hotkey::listener::HotkeyEvent::TogglePressed),
                     ipc::IpcCommand::Cancel => Some(hotkey::listener::HotkeyEvent::CancelPressed),
                     ipc::IpcCommand::Stop => {
-                        // Close the channel to stop the daemon
-                        drop(hotkey_tx_ipc);
+                        drop(hotkey_tx);
                         return;
                     }
                     ipc::IpcCommand::Status => None,
                 };
                 if let Some(evt) = event {
-                    let _ = hotkey_tx_ipc.send(evt);
+                    let _ = hotkey_tx.send(evt);
                 }
             }
         });
     }
-
-    // Create and run the app
-    let mut app = app::App::new(config, stt, llm, window_detector, output, correction_log);
-    app.run_daemon(hotkey_rx).await?;
-
-    Ok(())
 }
 
 // ─── IPC helpers ────────────────────────────────────────────────────

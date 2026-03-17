@@ -1,4 +1,4 @@
-//! System tray icon using the StatusNotifierItem D-Bus protocol.
+//! System tray icon using the `StatusNotifierItem` D-Bus protocol.
 //!
 //! Uses the [`ksni`] crate on Linux for native async tray support.
 //! Communicates with the main app via a channel of [`TrayAction`]s.
@@ -74,7 +74,7 @@ impl ksni::Tray for VoxForgeTray {
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
-        use ksni::menu::*;
+        use ksni::menu::{MenuItem, StandardItem};
 
         let toggle_label = if self.recording {
             "Stop Recording"

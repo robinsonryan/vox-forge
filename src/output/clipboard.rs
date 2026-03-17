@@ -86,8 +86,8 @@ fn paste_x11(text: &str) -> Result<()> {
     use arboard::Clipboard;
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
-    let mut clipboard = Clipboard::new()
-        .map_err(|e| Error::Output(format!("Failed to access clipboard: {e}")))?;
+    let mut clipboard =
+        Clipboard::new().map_err(|e| Error::Output(format!("Failed to access clipboard: {e}")))?;
 
     let saved = clipboard.get_text().ok();
 

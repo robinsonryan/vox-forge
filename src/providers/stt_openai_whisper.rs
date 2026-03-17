@@ -149,7 +149,9 @@ impl SttProvider for OpenAiWhisperProvider {
         } else {
             Ok(ProviderHealth {
                 ready: false,
-                message: "API key does not appear to be a valid OpenAI key".to_string(),
+                message:
+                    "API key does not appear to be a valid OpenAI key (expected sk-... or proj-...)"
+                        .to_string(),
             })
         }
     }

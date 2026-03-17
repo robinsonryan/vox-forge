@@ -50,16 +50,14 @@ impl super::TextOutput for TypingOutput {
             type_x11(text, self.keystroke_delay_ms)?;
         }
 
-        if self.auto_enter {
-            if self.auto_enter_delay_ms > 0 {
-                if !wait_for_escape(self.auto_enter_delay_ms) {
-                    send_enter()?;
-                } else {
-                    tracing::info!("Auto-enter cancelled by Escape");
-                }
+        if self.auto_enter && self.auto_enter_delay_ms > 0 {
+            if wait_for_escape(self.auto_enter_delay_ms) {
+                tracing::info!("Auto-enter cancelled by Escape");
             } else {
                 send_enter()?;
             }
+        } else if self.auto_enter {
+            send_enter()?;
         }
 
         Ok(())
@@ -132,13 +130,12 @@ fn wait_for_escape(duration_ms: u64) -> bool {
     // Set all keyboards to non-blocking via fcntl
     let mut keyboards: Vec<Device> = keyboards
         .into_iter()
-        .map(|dev| {
+        .inspect(|dev| {
             let fd = dev.as_raw_fd();
             unsafe {
                 let flags = libc::fcntl(fd, libc::F_GETFL);
                 libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
             }
-            dev
         })
         .collect();
 
@@ -147,10 +144,10 @@ fn wait_for_escape(duration_ms: u64) -> bool {
         for dev in &mut keyboards {
             if let Ok(events) = dev.fetch_events() {
                 for event in events {
-                    if let InputEventKind::Key(Key::KEY_ESC) = event.kind() {
-                        if event.value() == 1 {
-                            return true;
-                        }
+                    if matches!(event.kind(), InputEventKind::Key(Key::KEY_ESC))
+                        && event.value() == 1
+                    {
+                        return true;
                     }
                 }
             }
@@ -219,7 +216,12 @@ mod tests {
 
     #[test]
     fn should_use_clipboard_matches_case_insensitive() {
-        let output = TypingOutput::new(5, true, 2000, vec!["kitty".to_string(), "Alacritty".to_string()]);
+        let output = TypingOutput::new(
+            5,
+            true,
+            2000,
+            vec!["kitty".to_string(), "Alacritty".to_string()],
+        );
 
         assert!(output.should_use_clipboard("kitty"));
         assert!(output.should_use_clipboard("Kitty"));
@@ -230,7 +232,12 @@ mod tests {
 
     #[test]
     fn should_use_clipboard_rejects_non_matching() {
-        let output = TypingOutput::new(5, true, 2000, vec!["kitty".to_string(), "alacritty".to_string()]);
+        let output = TypingOutput::new(
+            5,
+            true,
+            2000,
+            vec!["kitty".to_string(), "alacritty".to_string()],
+        );
 
         assert!(!output.should_use_clipboard("firefox"));
         assert!(!output.should_use_clipboard("code"));
