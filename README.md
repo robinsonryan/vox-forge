@@ -34,34 +34,34 @@ cargo build --release
 
 ### Install (Linux)
 
-The Makefile handles binary installation and systemd service setup:
-
 ```bash
-make install
-```
+# Build
+cargo build --release
 
-This will:
-- Build the release binary
-- Copy it to `~/.local/bin/`
-- Install a systemd user service
-- Enable and start the daemon
+# Install binary
+cp target/release/vox-forge ~/.local/bin/voxforge
 
-Other Makefile targets:
-
-```bash
-make uninstall    # Stop daemon and remove files
-make reinstall    # Uninstall then install
-make status       # Show daemon status
-```
-
-### Manual install
-
-```bash
-cp target/release/vox-forge ~/.local/bin/
+# Install systemd user service
+mkdir -p ~/.config/systemd/user
 cp install/vox-forge.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now vox-forge.service
 ```
+
+### Managing the daemon
+
+The daemon runs as a systemd user service. Use these commands to manage it:
+
+```bash
+systemctl --user status vox-forge     # Check status
+systemctl --user restart vox-forge    # Restart (after settings changes or new builds)
+systemctl --user stop vox-forge       # Stop
+journalctl --user -u vox-forge -f     # Tail logs
+```
+
+The service auto-starts on login and restarts automatically on crash.
+
+**Note:** Settings changes made in the GUI require a daemon restart to take effect. The daemon loads its configuration once at startup.
 
 ## Configuration
 
@@ -75,14 +75,14 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
 
 # Or use the auth command
-vox-forge auth set anthropic
-vox-forge auth set openai
+voxforge auth set anthropic
+voxforge auth set openai
 ```
 
 Verify your key works:
 
 ```bash
-vox-forge auth verify
+voxforge auth verify
 ```
 
 ### Config file
@@ -90,13 +90,13 @@ vox-forge auth verify
 Configuration lives at `~/.config/vox-forge/config.toml`. Generate a default config:
 
 ```bash
-vox-forge config init
+voxforge config init
 ```
 
 Edit it directly or use the settings UI:
 
 ```bash
-vox-forge settings
+voxforge settings
 ```
 
 #### Key settings
@@ -112,7 +112,7 @@ language = "en"
 
 [formatting]
 provider = "anthropic"  # or "openai"
-default_mode = "auto"   # auto, code, email, chat, prose
+default_mode = "auto"   # auto, code, email, chat, raw
 
 [formatting.anthropic]
 model = "claude-haiku-4-5-20251001"
@@ -140,36 +140,56 @@ custom_terms = ["Kubernetes", "GraphQL"]
 
 ### Start the daemon
 
+If installed with systemd (recommended), the daemon starts automatically on login. Otherwise:
+
 ```bash
-vox-forge daemon              # Foreground
-vox-forge daemon --background # Background
-vox-forge tray                # With system tray icon
+voxforge                      # Start daemon (foreground, with tray icon)
+voxforge daemon               # Start daemon explicitly
+voxforge daemon --background  # Start in background
 ```
 
 ### Control recording
 
 ```bash
-vox-forge toggle   # Start/stop recording
-vox-forge cancel   # Cancel current recording
-vox-forge stop     # Stop the daemon
-vox-forge status   # Check daemon status
+voxforge toggle   # Start/stop recording
+voxforge cancel   # Cancel current recording
+voxforge stop     # Stop the daemon
+voxforge status   # Check daemon status
+```
+
+### Settings GUI
+
+```bash
+voxforge settings             # Open settings window
+```
+
+After changing settings, restart the daemon:
+
+```bash
+systemctl --user restart vox-forge
 ```
 
 ### Whisper model management
 
+Models are stored at `~/.local/share/voxforge/models/`. Download GGML models from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp):
+
 ```bash
-vox-forge model list              # List available models
-vox-forge model download small    # Download a model
-vox-forge model info base         # Show model details
+voxforge model list           # List downloaded models
+
+# Download models manually
+wget -P ~/.local/share/voxforge/models/ \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
 ```
+
+Available models: `tiny` (~75MB), `base` (~142MB), `small` (~466MB), `medium` (~1.5GB), `large-v3` (~3.1GB).
 
 ### Provider management
 
 ```bash
-vox-forge provider list              # List available providers
-vox-forge provider set-stt whisper_local
-vox-forge provider set-llm anthropic
-vox-forge provider test              # Health check
+voxforge provider list              # List available providers
+voxforge provider set-stt whisper_local
+voxforge provider set-llm anthropic
+voxforge provider test              # Health check
 ```
 
 ### Dictionary
@@ -177,10 +197,10 @@ vox-forge provider test              # Health check
 Add custom terms to improve recognition of domain-specific words:
 
 ```bash
-vox-forge dict add "Kubernetes"
-vox-forge dict add "GraphQL"
-vox-forge dict list
-vox-forge dict remove "GraphQL"
+voxforge dict add "Kubernetes"
+voxforge dict add "GraphQL"
+voxforge dict list
+voxforge dict remove "GraphQL"
 ```
 
 ### Corrections
@@ -188,20 +208,20 @@ vox-forge dict remove "GraphQL"
 Log corrections to improve future formatting:
 
 ```bash
-vox-forge correct "kube CTL" "kubectl"
-vox-forge corrections list
-vox-forge corrections clear
+voxforge correct "kube CTL" "kubectl"
+voxforge corrections list
+voxforge corrections clear
 ```
 
 ### Diagnostics
 
 ```bash
-vox-forge test mic       # Test microphone input
-vox-forge test hotkey    # Test hotkey registration
-vox-forge test type      # Test text output simulation
-vox-forge test context   # Detect active window
-vox-forge test format    # Preview audio formatting
-vox-forge devices        # List audio input devices
+voxforge test mic       # Test microphone input
+voxforge test hotkey    # Test hotkey registration
+voxforge test type      # Test text output simulation
+voxforge test context   # Detect active window
+voxforge test format    # Preview audio formatting
+voxforge devices        # List audio input devices
 ```
 
 ## Wayland
@@ -210,12 +230,12 @@ Global hotkeys require compositor support on Wayland. Bind your compositor's hot
 
 **Hyprland** (`~/.config/hypr/hyprland.conf`):
 ```
-bind = ALT_SHIFT, D, exec, vox-forge toggle
+bind = ALT_SHIFT, D, exec, voxforge toggle
 ```
 
 **Sway** (`~/.config/sway/config`):
 ```
-bindsym Alt+Shift+d exec vox-forge toggle
+bindsym Alt+Shift+d exec voxforge toggle
 ```
 
 ## Architecture
