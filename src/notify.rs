@@ -7,14 +7,20 @@
 use crate::error::Result;
 
 /// Send a desktop notification with the given `title` and `body`.
+///
+/// Uses `spawn_blocking` to avoid nested runtime conflicts when
+/// `notify-rust` calls `zbus::block_on()` internally.
 pub fn notify(title: &str, body: &str) -> Result<()> {
-    notify_rust::Notification::new()
-        .summary(title)
-        .body(body)
-        .appname("VoxForge")
-        .timeout(notify_rust::Timeout::Milliseconds(3000))
-        .show()
-        .map_err(|e| crate::error::Error::Platform(format!("Notification failed: {e}")))?;
+    let title = title.to_string();
+    let body = body.to_string();
+    std::thread::spawn(move || {
+        let _ = notify_rust::Notification::new()
+            .summary(&title)
+            .body(&body)
+            .appname("VoxForge")
+            .timeout(notify_rust::Timeout::Milliseconds(3000))
+            .show();
+    });
     Ok(())
 }
 

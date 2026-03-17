@@ -121,6 +121,19 @@ impl App {
                             let elapsed = start.elapsed();
                             let vad_result = vad.analyze(&samples, elapsed);
 
+                            // Log VAD state every ~1 second (every 10th poll)
+                            let poll_count = (elapsed.as_millis() / 100) as u64;
+                            if poll_count % 10 == 0 {
+                                tracing::debug!(
+                                    "VAD: current={:.1}dB, peak={:.1}dB, silence={:?}, should_stop={}, samples={}",
+                                    vad_result.current_db,
+                                    vad_result.peak_db,
+                                    vad_result.silence_duration,
+                                    vad_result.should_stop,
+                                    samples.len(),
+                                );
+                            }
+
                             if vad_result.should_stop {
                                 Some(DictationEvent::SilenceTimeout)
                             } else if elapsed

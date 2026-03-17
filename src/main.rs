@@ -81,8 +81,8 @@ async fn main() -> Result<()> {
             run_daemon(config, platform).await?;
         }
         Some(Command::Settings { tab: _ }) => {
-            info!("Settings UI -- not yet implemented");
-            // TODO: Launch egui settings window
+            ui::app::SettingsApp::run(config)
+                .map_err(|e| anyhow::anyhow!("Settings window error: {e}"))?;
         }
         Some(Command::Toggle) => {
             send_ipc_command(platform.as_ref(), ipc::IpcCommand::Toggle).await?;
@@ -158,6 +158,7 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
     let window_detector = context::create_window_detector();
     let output = output::typing::TypingOutput::new(
         config.output.keystroke_delay_ms,
+        config.output.auto_enter,
         config.output.clipboard_apps.clone(),
     );
     let correction_log = corrections::CorrectionLog::new(platform.corrections_path());
@@ -183,6 +184,50 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
                 tracing::warn!("Global hotkeys unavailable: {e}");
                 tracing::warn!("Use 'voxforge toggle' / 'voxforge cancel' via IPC instead");
             }
+        }
+    }
+
+    // Set up system tray
+    match ui::tray::spawn_tray().await {
+        Ok((mut tray_rx, _tray_handle)) => {
+            info!("System tray icon created");
+
+            let hotkey_tx_tray = hotkey_tx.clone();
+            let settings_config = config.clone();
+            tokio::spawn(async move {
+                while let Some(action) = tray_rx.recv().await {
+                    match action {
+                        ui::tray::TrayAction::ToggleRecording => {
+                            let _ = hotkey_tx_tray.send(hotkey::listener::HotkeyEvent::TogglePressed);
+                        }
+                        ui::tray::TrayAction::OpenSettings => {
+                            // Launch settings as a separate process to avoid
+                            // winit's "EventLoop can't be recreated" limitation.
+                            let exe = std::env::current_exe().unwrap_or_default();
+                            tracing::info!("Opening settings via: {}", exe.display());
+                            match std::process::Command::new(&exe)
+                                .arg("settings")
+                                .spawn()
+                            {
+                                Ok(child) => {
+                                    tracing::info!("Settings process spawned: pid {}", child.id());
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to open settings: {e}");
+                                }
+                            }
+                        }
+                        ui::tray::TrayAction::Quit => {
+                            info!("Quit requested from tray");
+                            drop(hotkey_tx_tray);
+                            return;
+                        }
+                    }
+                }
+            });
+        }
+        Err(e) => {
+            tracing::warn!("System tray unavailable: {e}");
         }
     }
 
@@ -449,7 +494,7 @@ fn handle_test_action(action: TestAction, config: &config::Config) -> Result<()>
             println!("Hotkey test requires running the daemon. Use: voxforge daemon -v");
         }
         TestAction::Type => {
-            let type_output = output::typing::TypingOutput::new(5, vec![]);
+            let type_output = output::typing::TypingOutput::new(5, false, vec![]);
             output::TextOutput::output_text(&type_output, "Hello from VoxForge!", "")?;
             println!("Typed: Hello from VoxForge!");
         }

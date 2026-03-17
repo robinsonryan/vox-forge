@@ -315,6 +315,9 @@ pub struct OutputConfig {
     #[serde(default = "default_keystroke_delay_ms")]
     pub keystroke_delay_ms: u64,
 
+    #[serde(default = "default_true")]
+    pub auto_enter: bool,
+
     #[serde(default = "default_clipboard_apps")]
     pub clipboard_apps: Vec<String>,
 }
@@ -324,6 +327,7 @@ impl Default for OutputConfig {
         Self {
             method: default_output_method(),
             keystroke_delay_ms: default_keystroke_delay_ms(),
+            auto_enter: true,
             clipboard_apps: default_clipboard_apps(),
         }
     }
