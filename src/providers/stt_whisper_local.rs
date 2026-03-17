@@ -60,10 +60,9 @@ impl WhisperLocalProvider {
                 }
             }
 
-            let path_str = model_path.to_string_lossy();
-            let whisper_ctx = WhisperContext::new_with_params(&path_str, params)
+            let whisper_ctx = WhisperContext::new_with_params(&model_path, params)
                 .map_err(|e| Error::Transcription(format!("Failed to load whisper model: {e}")))?;
-            tracing::info!("Whisper model loaded from {}", path_str);
+            tracing::info!("Whisper model loaded from {}", model_path.display());
             Some(whisper_ctx)
         } else {
             tracing::warn!(
