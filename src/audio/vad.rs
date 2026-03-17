@@ -16,6 +16,7 @@ pub struct VoiceActivityDetector {
 /// Result of a VAD analysis pass.
 pub struct VadResult {
     /// Whether the most recent window contains speech.
+    #[allow(dead_code)]
     pub is_speech: bool,
     /// dB level of the most recent window.
     pub current_db: f32,

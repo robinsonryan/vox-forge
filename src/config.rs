@@ -584,6 +584,15 @@ impl Config {
         }
         let contents = toml::to_string_pretty(self)?;
         std::fs::write(path, contents)?;
+
+        // Restrict permissions to owner-only since config may contain API keys
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(path, perms)?;
+        }
+
         Ok(())
     }
 

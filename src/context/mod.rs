@@ -46,6 +46,7 @@ pub fn create_window_detector() -> Box<dyn WindowDetector> {
 
 /// A no-op detector that always returns unknown context.
 /// Used as fallback when detection isn't available.
+#[allow(dead_code)]
 pub struct FallbackDetector;
 
 impl WindowDetector for FallbackDetector {

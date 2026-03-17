@@ -49,6 +49,7 @@ pub fn list_terms(config: &Config) -> &[String] {
 ///
 /// Returns `"(none configured)"` when the dictionary is empty, otherwise
 /// returns a comma-separated list of all terms.
+#[allow(dead_code)]
 pub fn format_terms_for_prompt(config: &Config) -> String {
     if config.dictionary.custom_terms.is_empty() {
         "(none configured)".to_string()
@@ -61,6 +62,7 @@ pub fn format_terms_for_prompt(config: &Config) -> String {
 ///
 /// Blank lines and duplicates are skipped. Returns the number of new
 /// terms that were added.
+#[allow(dead_code)]
 pub fn import_from_file(config: &mut Config, path: &Path) -> Result<usize> {
     let content = std::fs::read_to_string(path)?;
     let mut count = 0;
@@ -75,6 +77,7 @@ pub fn import_from_file(config: &mut Config, path: &Path) -> Result<usize> {
 }
 
 /// Export terms to a newline-delimited text file.
+#[allow(dead_code)]
 pub fn export_to_file(config: &Config, path: &Path) -> Result<()> {
     let content = config.dictionary.custom_terms.join("\n");
     std::fs::write(path, content)?;

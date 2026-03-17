@@ -19,9 +19,12 @@ const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
 /// Local Whisper provider using `whisper-rs` for on-device transcription.
 pub struct WhisperLocalProvider {
+    #[allow(dead_code)]
     model_name: String,
+    #[allow(dead_code)]
     device: ComputeDevice,
     language: String,
+    #[allow(dead_code)]
     model_dir: PathBuf,
     ctx: Option<WhisperContext>,
 }
@@ -80,11 +83,13 @@ impl WhisperLocalProvider {
     }
 
     /// Full filesystem path to the expected GGML model file.
+    #[allow(dead_code)]
     pub fn model_path(&self) -> PathBuf {
         self.model_dir.join(format!("ggml-{}.bin", self.model_name))
     }
 
     /// Whether the model file has been downloaded and is present on disk.
+    #[allow(dead_code)]
     pub fn model_loaded(&self) -> bool {
         self.ctx.is_some()
     }

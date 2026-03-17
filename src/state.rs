@@ -19,6 +19,7 @@ pub enum DictationState {
     /// Outputting formatted text at cursor.
     Typing,
     /// An error occurred, returning to idle.
+    #[allow(dead_code)]
     Error(String),
 }
 
@@ -51,11 +52,15 @@ pub enum DictationEvent {
     /// Max recording duration reached.
     MaxDurationReached,
     /// Recording completed with audio data.
+    #[allow(dead_code)]
     RecordingComplete { duration_ms: u64 },
     /// Transcription completed.
     TranscriptionComplete { text: String },
     /// Formatting completed.
-    FormattingComplete { text: String },
+    FormattingComplete {
+        #[allow(dead_code)]
+        text: String,
+    },
     /// Text output completed.
     OutputComplete,
     /// An error occurred.
@@ -91,6 +96,7 @@ impl DictationStateMachine {
         }
     }
 
+    #[allow(dead_code)]
     pub fn state(&self) -> &DictationState {
         &self.state
     }
@@ -186,6 +192,7 @@ impl DictationStateMachine {
     }
 
     /// Reset to idle (for error recovery).
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.state = DictationState::Idle;
     }

@@ -9,7 +9,9 @@ use crate::ui::theme;
 pub enum StatusLevel {
     Ready,
     Warning,
+    #[allow(dead_code)]
     Error,
+    #[allow(dead_code)]
     Inactive,
 }
 

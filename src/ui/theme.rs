@@ -4,6 +4,7 @@
 
 use egui::Color32;
 
+#[allow(dead_code)]
 pub const ACCENT: Color32 = Color32::from_rgb(99, 102, 241); // Indigo
 pub const SUCCESS: Color32 = Color32::from_rgb(34, 197, 94); // Green
 pub const WARNING: Color32 = Color32::from_rgb(234, 179, 8); // Yellow

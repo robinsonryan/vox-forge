@@ -258,8 +258,9 @@ pub enum AuthAction {
         /// Provider name (anthropic, openai)
         provider: String,
 
-        /// API key value
-        key: String,
+        /// API key value (omit to read from stdin)
+        #[arg(long)]
+        key: Option<String>,
     },
 
     /// Verify an API key works

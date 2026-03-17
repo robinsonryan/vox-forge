@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 
 /// Identifies which STT backend to use.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SttProviderType {
@@ -27,14 +28,17 @@ pub struct TranscriptionResult {
     /// The transcribed text.
     pub text: String,
     /// Language detected by the model, if available.
+    #[allow(dead_code)]
     pub language_detected: Option<String>,
     /// Wall-clock time spent on transcription, in milliseconds.
     pub duration_ms: u64,
     /// Duration of the source audio, in milliseconds.
+    #[allow(dead_code)]
     pub audio_duration_ms: u64,
 }
 
 /// Metadata about an available model.
+#[allow(dead_code)]
 pub struct ModelInfo {
     /// Machine-readable identifier (e.g. `"base"`, `"whisper-1"`).
     pub id: String,
@@ -49,6 +53,7 @@ pub struct ModelInfo {
 }
 
 /// Health status of a provider.
+#[allow(dead_code)]
 pub struct ProviderHealth {
     /// `true` when the provider is ready to accept requests.
     pub ready: bool,
@@ -57,6 +62,7 @@ pub struct ProviderHealth {
 }
 
 /// Trait that every speech-to-text backend must implement.
+#[allow(dead_code)]
 #[async_trait]
 pub trait SttProvider: Send + Sync {
     /// Transcribe raw audio samples at the given sample rate.

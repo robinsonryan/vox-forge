@@ -53,6 +53,7 @@ impl App {
     pub async fn run_daemon(
         &mut self,
         mut hotkey_rx: mpsc::UnboundedReceiver<HotkeyEvent>,
+        shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Result<()> {
         use crate::audio::capture::AudioCapture;
         use crate::audio::vad::VoiceActivityDetector;
@@ -88,6 +89,12 @@ impl App {
             None;
 
         loop {
+            // Check shutdown signal
+            if *shutdown_rx.borrow() {
+                tracing::info!("Shutdown signal received, exiting daemon loop");
+                break;
+            }
+
             // Process hotkey events with a timeout so we can poll VAD
             let event = match tokio::time::timeout(
                 std::time::Duration::from_millis(100),
@@ -163,13 +170,13 @@ impl App {
                 match command {
                     DictationCommand::StartRecording => {
                         crate::notify::notify_recording();
-                        println!("[recording] Started...");
+                        tracing::info!("[recording] Started...");
                         match audio_capture.start_recording() {
                             Ok(handle) => {
                                 recording = Some((handle, std::time::Instant::now()));
                             }
                             Err(e) => {
-                                println!("[error] Audio capture failed: {e}");
+                                tracing::error!("[error] Audio capture failed: {e}");
                                 crate::notify::notify_error(&e.to_string());
                                 self.state_machine
                                     .handle_event(DictationEvent::ErrorOccurred {
@@ -243,7 +250,7 @@ impl App {
         };
 
         if transcript.trim().is_empty() {
-            println!("[skipped] Empty transcription");
+            tracing::debug!("[skipped] Empty transcription");
             return;
         }
 
@@ -305,7 +312,7 @@ impl App {
                 Some(result.text)
             }
             Err(e) => {
-                println!("[error] Transcription failed: {e}");
+                tracing::error!("[error] Transcription failed: {e}");
                 self.state_machine
                     .handle_event(DictationEvent::ErrorOccurred {
                         message: format!("Transcription failed: {e}"),
@@ -323,7 +330,7 @@ impl App {
     ) -> String {
         if *mode == FormattingMode::Raw {
             let result = crate::format::fallback::format_fallback(transcript);
-            println!("[formatted] (fallback) \"{result}\"");
+            tracing::info!("[formatted] (fallback) \"{result}\"");
             return result;
         }
 
@@ -348,43 +355,43 @@ impl App {
             .await
             {
                 Ok(Ok(result)) => {
-                    println!("[formatted] ({}ms) \"{}\"", result.duration_ms, result.text);
+                    tracing::info!("[formatted] ({}ms) \"{}\"", result.duration_ms, result.text);
                     result.text
                 }
                 Ok(Err(e)) => {
-                    println!("[warning] LLM failed: {e}");
-                    println!("[formatted] (fallback)");
+                    tracing::warn!("[warning] LLM failed: {e}");
+                    tracing::info!("[formatted] (fallback)");
                     crate::format::fallback::format_fallback(transcript)
                 }
                 Err(_) => {
-                    println!(
+                    tracing::warn!(
                         "[warning] LLM timed out ({}ms limit)",
                         self.config.formatting.timeout_ms
                     );
-                    println!("[formatted] (fallback)");
+                    tracing::info!("[formatted] (fallback)");
                     crate::format::fallback::format_fallback(transcript)
                 }
             }
         } else {
             let result = crate::format::fallback::format_fallback(transcript);
-            println!("[formatted] (fallback) \"{result}\"");
+            tracing::info!("[formatted] (fallback) \"{result}\"");
             result
         }
     }
 
     fn output_text(&mut self, formatted: &str, executable: &str) {
-        println!("[typing] Outputting text...");
+        tracing::info!("[typing] Outputting text...");
         match self.output.output_text(formatted, executable) {
             Ok(()) => {
-                println!("[done] Output complete");
+                tracing::info!("[done] Output complete");
             }
             Err(e) => {
-                println!("[warning] Typing failed ({e}), trying clipboard...");
+                tracing::warn!("[warning] Typing failed ({e}), trying clipboard...");
                 if let Err(e2) = crate::output::clipboard::paste_text(formatted) {
-                    println!("[error] Clipboard also failed: {e2}");
+                    tracing::error!("[error] Clipboard also failed: {e2}");
                     crate::notify::notify_error("Output failed");
                 } else {
-                    println!("[done] Pasted via clipboard");
+                    tracing::info!("[done] Pasted via clipboard");
                 }
             }
         }

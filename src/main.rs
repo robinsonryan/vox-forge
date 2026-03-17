@@ -7,33 +7,21 @@
 #![warn(clippy::pedantic)]
 
 mod app;
-#[allow(dead_code)]
 mod audio;
 mod cli;
 mod config;
-#[allow(dead_code)]
 mod context;
-#[allow(dead_code)]
 mod corrections;
-#[allow(dead_code)]
 mod dictionary;
 mod error;
-#[allow(dead_code)]
 mod format;
-#[allow(dead_code)]
 mod hotkey;
-#[allow(dead_code)]
 mod ipc;
-#[allow(dead_code)]
 mod notify;
-#[allow(dead_code)]
 mod output;
 mod platform;
-#[allow(dead_code)]
 mod providers;
-#[allow(dead_code)]
 mod state;
-#[allow(dead_code)]
 mod ui;
 
 use anyhow::Result;
@@ -188,13 +176,28 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
         }
     }
 
-    let _tray_handle = spawn_tray(hotkey_tx.clone()).await;
-    spawn_ipc(platform.as_ref(), hotkey_tx.clone());
+    // Shutdown signal: watch channel shared with tray, IPC, and signal handler
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let _tray_handle = spawn_tray(hotkey_tx.clone(), shutdown_tx.clone()).await;
+    spawn_ipc(platform.as_ref(), hotkey_tx.clone(), shutdown_tx.clone());
+
+    // Graceful SIGTERM/SIGINT handling
+    {
+        let shutdown_tx = shutdown_tx.clone();
+        tokio::spawn(async move {
+            if let Ok(()) = tokio::signal::ctrl_c().await {
+                info!("Received SIGINT, shutting down...");
+                let _ = shutdown_tx.send(true);
+            }
+        });
+    }
 
     // Create and run the app
     let mut app = app::App::new(config, stt, llm, window_detector, output, correction_log);
-    app.run_daemon(hotkey_rx).await?;
+    app.run_daemon(hotkey_rx, shutdown_rx).await?;
 
+    info!("Daemon shut down cleanly");
     Ok(())
 }
 
@@ -202,6 +205,7 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
 
 async fn spawn_tray(
     hotkey_tx: tokio::sync::mpsc::UnboundedSender<hotkey::listener::HotkeyEvent>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
 ) -> Option<ui::tray::TrayHandle> {
     match ui::tray::spawn_tray().await {
         Ok((mut tray_rx, tray_handle)) => {
@@ -227,6 +231,7 @@ async fn spawn_tray(
                         }
                         ui::tray::TrayAction::Quit => {
                             info!("Quit requested from tray");
+                            let _ = shutdown_tx.send(true);
                             return;
                         }
                     }
@@ -246,6 +251,7 @@ async fn spawn_tray(
 fn spawn_ipc(
     platform: &dyn platform::Platform,
     hotkey_tx: tokio::sync::mpsc::UnboundedSender<hotkey::listener::HotkeyEvent>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
 ) {
     #[cfg(unix)]
     {
@@ -265,7 +271,8 @@ fn spawn_ipc(
                     ipc::IpcCommand::Toggle => Some(hotkey::listener::HotkeyEvent::TogglePressed),
                     ipc::IpcCommand::Cancel => Some(hotkey::listener::HotkeyEvent::CancelPressed),
                     ipc::IpcCommand::Stop => {
-                        drop(hotkey_tx);
+                        info!("Stop requested via IPC");
+                        let _ = shutdown_tx.send(true);
                         return;
                     }
                     ipc::IpcCommand::Status => None,
@@ -537,20 +544,32 @@ fn handle_provider_action(action: ProviderAction, config: &config::Config) {
 
 fn handle_auth_action(action: AuthAction, config: &mut config::Config) -> Result<()> {
     match action {
-        AuthAction::Set { provider, key } => match provider.as_str() {
-            "anthropic" => {
-                config.formatting.anthropic.api_key = key;
-                config.save()?;
-                println!("Anthropic API key saved.");
+        AuthAction::Set { provider, key } => {
+            let key = if let Some(k) = key {
+                k
+            } else {
+                eprint!("Enter API key for {provider}: ");
+                let mut input = String::new();
+                std::io::stdin()
+                    .read_line(&mut input)
+                    .map_err(|e| anyhow::anyhow!("Failed to read key: {e}"))?;
+                input.trim().to_string()
+            };
+            match provider.as_str() {
+                "anthropic" => {
+                    config.formatting.anthropic.api_key = key;
+                    config.save()?;
+                    println!("Anthropic API key saved.");
+                }
+                "openai" => {
+                    config.formatting.openai.api_key = key.clone();
+                    config.transcription.openai_whisper.api_key = key;
+                    config.save()?;
+                    println!("OpenAI API key saved.");
+                }
+                _ => println!("Unknown provider: {provider}. Use 'anthropic' or 'openai'."),
             }
-            "openai" => {
-                config.formatting.openai.api_key = key.clone();
-                config.transcription.openai_whisper.api_key = key;
-                config.save()?;
-                println!("OpenAI API key saved.");
-            }
-            _ => println!("Unknown provider: {provider}. Use 'anthropic' or 'openai'."),
-        },
+        }
         AuthAction::Verify { provider: _ } => {
             if config.has_anthropic_key() {
                 println!("Anthropic: key configured");

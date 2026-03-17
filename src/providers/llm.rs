@@ -8,6 +8,7 @@ use crate::error::Result;
 use super::stt::{ModelInfo, ProviderHealth};
 
 /// Identifies which LLM backend to use.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmProviderType {
@@ -24,12 +25,15 @@ pub struct FormattingResult {
     /// Wall-clock time spent on the LLM call, in milliseconds.
     pub duration_ms: u64,
     /// Tokens consumed, if reported by the API.
+    #[allow(dead_code)]
     pub tokens_used: Option<u64>,
     /// Estimated cost in USD, if calculable.
+    #[allow(dead_code)]
     pub cost_estimate: Option<f64>,
 }
 
 /// Trait that every LLM formatting backend must implement.
+#[allow(dead_code)]
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
     /// Send a transcript through the LLM with the given system prompt

@@ -37,6 +37,7 @@ pub fn notify_error(reason: &str) {
 }
 
 /// Notify that the current operation was cancelled.
+#[allow(dead_code)]
 pub fn notify_cancelled() {
     notify("VoxForge", "Cancelled");
 }

@@ -19,12 +19,14 @@ pub enum TrayAction {
 /// Handle to a running tray icon, used to update its state.
 #[cfg(target_os = "linux")]
 pub struct TrayHandle {
+    #[allow(dead_code)]
     inner: ksni::Handle<VoxForgeTray>,
 }
 
 #[cfg(target_os = "linux")]
 impl TrayHandle {
     /// Update the tray to show recording state.
+    #[allow(dead_code)]
     pub async fn set_recording(&self, recording: bool) {
         self.inner
             .update(move |tray| tray.recording = recording)
