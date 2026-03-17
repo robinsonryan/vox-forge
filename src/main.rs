@@ -159,6 +159,7 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
     let output = output::typing::TypingOutput::new(
         config.output.keystroke_delay_ms,
         config.output.auto_enter,
+        config.output.auto_enter_delay_ms,
         config.output.clipboard_apps.clone(),
     );
     let correction_log = corrections::CorrectionLog::new(platform.corrections_path());
@@ -494,7 +495,7 @@ fn handle_test_action(action: TestAction, config: &config::Config) -> Result<()>
             println!("Hotkey test requires running the daemon. Use: voxforge daemon -v");
         }
         TestAction::Type => {
-            let type_output = output::typing::TypingOutput::new(5, false, vec![]);
+            let type_output = output::typing::TypingOutput::new(5, false, 0, vec![]);
             output::TextOutput::output_text(&type_output, "Hello from VoxForge!", "")?;
             println!("Typed: Hello from VoxForge!");
         }
