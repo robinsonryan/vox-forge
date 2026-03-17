@@ -478,7 +478,7 @@ fn handle_test_action(action: TestAction, config: &config::Config) -> Result<()>
                 "Recording 3 seconds of audio (device: {})...",
                 device_name.unwrap_or("default")
             );
-            let capture = audio::capture::AudioCapture::new(device_name)?;
+            let capture = audio::capture::AudioCapture::new(device_name, 0)?;
             let handle = capture.start_recording()?;
             std::thread::sleep(std::time::Duration::from_secs(3));
             let buffer = handle.stop()?;

@@ -3,6 +3,7 @@
 //! Platform-agnostic audio recording. cpal handles the backend
 //! selection (ALSA/PipeWire on Linux, WASAPI on Windows).
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -17,15 +18,39 @@ pub struct AudioDevice {
     pub is_default: bool,
 }
 
-/// Audio capture manager.
+/// Shared state between the always-on audio stream and the capture API.
+struct CaptureState {
+    /// Circular buffer holding the most recent pre-roll samples.
+    pre_roll: VecDeque<f32>,
+    /// Maximum number of samples to keep in the pre-roll buffer.
+    pre_roll_capacity: usize,
+    /// Recording buffer — samples are appended here while recording.
+    recording_buf: Vec<f32>,
+    /// Whether we are currently recording.
+    is_recording: bool,
+}
+
+/// Audio capture manager with always-on pre-roll buffer.
+///
+/// Starts a background audio stream on creation that continuously fills a
+/// circular pre-roll buffer. When `start_recording()` is called, the pre-roll
+/// samples are prepended to the recording so speech that started just before
+/// the hotkey press is captured.
 pub struct AudioCapture {
-    device: cpal::Device,
-    sample_rate: u32,
+    _stream: cpal::Stream,
+    state: Arc<Mutex<CaptureState>>,
+    recording_flag: Arc<AtomicBool>,
+    native_sample_rate: u32,
+    target_sample_rate: u32,
 }
 
 impl AudioCapture {
     /// Create a new `AudioCapture` with the specified device (or default).
-    pub fn new(device_name: Option<&str>) -> Result<Self> {
+    ///
+    /// Immediately starts a background audio stream that feeds the pre-roll
+    /// buffer. `pre_roll_ms` controls how many milliseconds of audio are
+    /// kept for prepending when recording starts.
+    pub fn new(device_name: Option<&str>, pre_roll_ms: u64) -> Result<Self> {
         let host = cpal::default_host();
 
         let device = if let Some(name) = device_name {
@@ -42,9 +67,76 @@ impl AudioCapture {
             .default_input_config()
             .map_err(|e| Error::Audio(format!("No supported input config: {e}")))?;
 
+        let native_sample_rate = config.sample_rate().0;
+        let target_sample_rate = 16_000u32;
+
+        // Pre-roll capacity in native-rate samples
+        #[allow(clippy::cast_possible_truncation)]
+        let pre_roll_capacity = (u64::from(native_sample_rate) * pre_roll_ms / 1000) as usize;
+
+        let state = Arc::new(Mutex::new(CaptureState {
+            pre_roll: VecDeque::with_capacity(pre_roll_capacity),
+            pre_roll_capacity,
+            recording_buf: Vec::new(),
+            is_recording: false,
+        }));
+
+        let recording_flag = Arc::new(AtomicBool::new(false));
+
+        // Build the always-on background stream
+        let state_clone = Arc::clone(&state);
+        let flag_clone = Arc::clone(&recording_flag);
+
+        let stream_config = cpal::StreamConfig {
+            channels: 1,
+            sample_rate: cpal::SampleRate(native_sample_rate),
+            buffer_size: cpal::BufferSize::Default,
+        };
+
+        let err_fn = |err: cpal::StreamError| {
+            tracing::error!("Audio stream error: {err}");
+        };
+
+        let stream = device
+            .build_input_stream(
+                &stream_config,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    if flag_clone.load(Ordering::Relaxed) {
+                        // Recording mode: append to recording buffer
+                        if let Ok(mut s) = state_clone.lock() {
+                            s.recording_buf.extend_from_slice(data);
+                        }
+                    } else {
+                        // Idle mode: feed circular pre-roll buffer
+                        if let Ok(mut s) = state_clone.lock() {
+                            for &sample in data {
+                                if s.pre_roll.len() >= s.pre_roll_capacity {
+                                    s.pre_roll.pop_front();
+                                }
+                                s.pre_roll.push_back(sample);
+                            }
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            )
+            .map_err(|e| Error::Audio(format!("Failed to build input stream: {e}")))?;
+
+        stream
+            .play()
+            .map_err(|e| Error::Audio(format!("Failed to start stream: {e}")))?;
+
+        tracing::info!(
+            "Audio capture started (pre-roll: {pre_roll_ms}ms, {pre_roll_capacity} samples)"
+        );
+
         Ok(Self {
-            device,
-            sample_rate: config.sample_rate().0,
+            _stream: stream,
+            state,
+            recording_flag,
+            native_sample_rate,
+            target_sample_rate,
         })
     }
 
@@ -66,68 +158,45 @@ impl AudioCapture {
         Ok(devices)
     }
 
-    /// Record audio. Returns a handle that collects samples.
-    /// Call `stop()` on the handle to get the audio buffer.
+    /// Start recording. Drains the pre-roll buffer and begins capturing.
+    /// Returns a handle to stop recording and retrieve the audio.
     pub fn start_recording(&self) -> Result<RecordingHandle> {
-        let buffer: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-        let buffer_clone = Arc::clone(&buffer);
-        let recording = Arc::new(AtomicBool::new(true));
-        let recording_clone = Arc::clone(&recording);
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|e| Error::Audio(format!("Failed to lock capture state: {e}")))?;
 
-        let native_sample_rate = self.sample_rate;
-        let target_sample_rate = 16_000u32;
+        // Drain pre-roll into the recording buffer
+        state.recording_buf.clear();
+        let pre_roll: Vec<f32> = state.pre_roll.drain(..).collect();
+        let pre_roll_samples = pre_roll.len();
+        state.recording_buf.extend(pre_roll);
+        state.is_recording = true;
+        drop(state);
 
-        let config = cpal::StreamConfig {
-            channels: 1,
-            sample_rate: cpal::SampleRate(native_sample_rate),
-            buffer_size: cpal::BufferSize::Default,
-        };
+        // Set the atomic flag so the stream callback switches to recording mode
+        self.recording_flag.store(true, Ordering::Relaxed);
 
-        let err_fn = |err: cpal::StreamError| {
-            tracing::error!("Audio stream error: {err}");
-        };
-
-        let stream = self
-            .device
-            .build_input_stream(
-                &config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    if !recording_clone.load(Ordering::Relaxed) {
-                        return;
-                    }
-                    if let Ok(mut buf) = buffer_clone.lock() {
-                        buf.extend_from_slice(data);
-                    }
-                },
-                err_fn,
-                None,
-            )
-            .map_err(|e| Error::Audio(format!("Failed to build input stream: {e}")))?;
-
-        stream
-            .play()
-            .map_err(|e| Error::Audio(format!("Failed to start stream: {e}")))?;
+        tracing::debug!("Recording started with {pre_roll_samples} pre-roll samples");
 
         Ok(RecordingHandle {
-            _stream: stream,
-            buffer,
-            recording,
-            native_sample_rate,
-            target_sample_rate,
+            state: Arc::clone(&self.state),
+            recording_flag: Arc::clone(&self.recording_flag),
+            native_sample_rate: self.native_sample_rate,
+            target_sample_rate: self.target_sample_rate,
         })
     }
 
     /// The native sample rate of the selected device.
     pub fn sample_rate(&self) -> u32 {
-        self.sample_rate
+        self.native_sample_rate
     }
 }
 
 /// Handle to an in-progress recording.
 pub struct RecordingHandle {
-    _stream: cpal::Stream,
-    buffer: Arc<Mutex<Vec<f32>>>,
-    recording: Arc<AtomicBool>,
+    state: Arc<Mutex<CaptureState>>,
+    recording_flag: Arc<AtomicBool>,
     native_sample_rate: u32,
     target_sample_rate: u32,
 }
@@ -138,24 +207,30 @@ impl RecordingHandle {
     /// Only copies the last `max_samples` samples instead of the entire buffer,
     /// avoiding O(n) clones on every poll for long recordings.
     pub fn tail_samples(&self, max_samples: usize) -> Vec<f32> {
-        self.buffer
+        self.state
             .lock()
-            .map(|b| {
-                let start = b.len().saturating_sub(max_samples);
-                b[start..].to_vec()
+            .map(|s| {
+                let buf = &s.recording_buf;
+                let start = buf.len().saturating_sub(max_samples);
+                buf[start..].to_vec()
             })
             .unwrap_or_default()
     }
 
     /// Stop recording and return the audio buffer resampled to 16 kHz.
     pub fn stop(self) -> Result<AudioBuffer> {
-        self.recording.store(false, Ordering::Relaxed);
+        // Switch back to pre-roll mode
+        self.recording_flag.store(false, Ordering::Relaxed);
+
         // Lock guarantees any in-progress callback has finished writing.
-        let samples = self
-            .buffer
+        let mut state = self
+            .state
             .lock()
-            .map_err(|e| Error::Audio(format!("Failed to get audio buffer: {e}")))?
-            .clone();
+            .map_err(|e| Error::Audio(format!("Failed to get audio buffer: {e}")))?;
+
+        state.is_recording = false;
+        let samples = std::mem::take(&mut state.recording_buf);
+        drop(state);
 
         let samples = if self.native_sample_rate == self.target_sample_rate {
             samples
@@ -174,7 +249,10 @@ impl RecordingHandle {
 
     /// The number of samples recorded so far.
     pub fn sample_count(&self) -> usize {
-        self.buffer.lock().map(|b| b.len()).unwrap_or(0)
+        self.state
+            .lock()
+            .map(|s| s.recording_buf.len())
+            .unwrap_or(0)
     }
 }
 

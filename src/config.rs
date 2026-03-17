@@ -245,6 +245,9 @@ pub struct AudioConfig {
     #[serde(default = "default_silence_timeout_s")]
     pub silence_timeout_s: f64,
 
+    #[serde(default = "default_pre_roll_ms")]
+    pub pre_roll_ms: u64,
+
     #[serde(default)]
     pub input_device: String,
 }
@@ -256,6 +259,7 @@ impl Default for AudioConfig {
             min_recording_ms: default_min_recording_ms(),
             max_recording_s: default_max_recording_s(),
             silence_timeout_s: default_silence_timeout_s(),
+            pre_roll_ms: default_pre_roll_ms(),
             input_device: String::new(),
         }
     }
@@ -477,6 +481,10 @@ fn default_max_recording_s() -> u64 {
 
 fn default_silence_timeout_s() -> f64 {
     3.0
+}
+
+fn default_pre_roll_ms() -> u64 {
+    500
 }
 
 fn default_hotkey_toggle() -> String {

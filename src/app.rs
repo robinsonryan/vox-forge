@@ -64,7 +64,7 @@ impl App {
         } else {
             Some(self.config.audio.input_device.as_str())
         };
-        let audio_capture = AudioCapture::new(device_name)?;
+        let audio_capture = AudioCapture::new(device_name, self.config.audio.pre_roll_ms)?;
 
         #[allow(clippy::cast_possible_truncation)]
         let vad = VoiceActivityDetector::new(
