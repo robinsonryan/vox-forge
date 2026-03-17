@@ -169,10 +169,7 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
 
     // Set up hotkey listener (skip entirely on Wayland where X11 grab causes fatal abort)
     let (hotkey_tx, hotkey_rx) = tokio::sync::mpsc::unbounded_channel();
-    let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
-        || std::env::var("XDG_SESSION_TYPE")
-            .map(|v| v == "wayland")
-            .unwrap_or(false);
+    let is_wayland = platform.is_wayland();
 
     if is_wayland {
         tracing::warn!("Wayland detected -- global hotkeys not available");
@@ -191,7 +188,7 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
         }
     }
 
-    spawn_tray(hotkey_tx.clone()).await;
+    let _tray_handle = spawn_tray(hotkey_tx.clone()).await;
     spawn_ipc(platform.as_ref(), hotkey_tx.clone());
 
     // Create and run the app
@@ -203,9 +200,11 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
 
 // ─── Daemon subsystem helpers ────────────────────────────────────────
 
-async fn spawn_tray(hotkey_tx: tokio::sync::mpsc::UnboundedSender<hotkey::listener::HotkeyEvent>) {
+async fn spawn_tray(
+    hotkey_tx: tokio::sync::mpsc::UnboundedSender<hotkey::listener::HotkeyEvent>,
+) -> Option<ui::tray::TrayHandle> {
     match ui::tray::spawn_tray().await {
-        Ok((mut tray_rx, _tray_handle)) => {
+        Ok((mut tray_rx, tray_handle)) => {
             info!("System tray icon created");
 
             tokio::spawn(async move {
@@ -233,9 +232,12 @@ async fn spawn_tray(hotkey_tx: tokio::sync::mpsc::UnboundedSender<hotkey::listen
                     }
                 }
             });
+
+            Some(tray_handle)
         }
         Err(e) => {
             tracing::warn!("System tray unavailable: {e}");
+            None
         }
     }
 }
@@ -480,17 +482,7 @@ fn handle_test_action(action: TestAction, config: &config::Config) -> Result<()>
             );
 
             // Show peak level
-            let peak = buffer
-                .samples
-                .iter()
-                .map(|s| s.abs())
-                .fold(0.0_f32, f32::max);
-            #[allow(clippy::cast_possible_truncation)]
-            let peak_db = if peak > 0.0 {
-                20.0 * peak.log10()
-            } else {
-                -100.0
-            };
+            let peak_db = buffer.peak_db();
             println!("Peak level: {peak_db:.1} dB");
         }
         TestAction::Hotkey => {

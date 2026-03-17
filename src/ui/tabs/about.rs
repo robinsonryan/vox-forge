@@ -16,7 +16,7 @@ pub fn draw(ui: &mut Ui, config: &Config) {
         ui.label(format!("OS: {}", std::env::consts::OS));
         ui.label(format!("Arch: {}", std::env::consts::ARCH));
 
-        if is_wayland() {
+        if crate::platform::is_wayland() {
             ui.label("Display: Wayland");
         } else {
             ui.label("Display: X11 / Other");
@@ -95,12 +95,4 @@ pub fn draw(ui: &mut Ui, config: &Config) {
             "Use the CLI for full diagnostic tests: voxforge test mic / hotkey / type",
         );
     });
-}
-
-/// Check whether the current session appears to be running under Wayland.
-fn is_wayland() -> bool {
-    std::env::var("WAYLAND_DISPLAY").is_ok()
-        || std::env::var("XDG_SESSION_TYPE")
-            .map(|v| v == "wayland")
-            .unwrap_or(false)
 }

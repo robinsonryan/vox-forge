@@ -9,15 +9,11 @@ use crate::error::{Error, Result};
 
 /// Paste `text` via the system clipboard and a simulated Ctrl+V keystroke.
 pub fn paste_text(text: &str) -> Result<()> {
-    if is_wayland() {
+    if crate::platform::is_wayland() {
         paste_wayland(text)
     } else {
         paste_x11(text)
     }
-}
-
-fn is_wayland() -> bool {
-    std::env::var("WAYLAND_DISPLAY").is_ok()
 }
 
 /// Wayland paste using `wl-copy` + `wtype`.

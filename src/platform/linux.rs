@@ -39,7 +39,7 @@ impl LinuxPlatform {
                 Some(PathBuf::from(format!("/tmp/voxforge-{uid}")))
             });
 
-        let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok();
+        let is_wayland = super::is_wayland();
 
         Self {
             config,

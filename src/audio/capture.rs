@@ -179,6 +179,16 @@ pub struct AudioBuffer {
 }
 
 impl AudioBuffer {
+    /// Peak amplitude across all samples.
+    pub fn peak_amplitude(&self) -> f32 {
+        self.samples.iter().map(|s| s.abs()).fold(0.0_f32, f32::max)
+    }
+
+    /// Peak amplitude in decibels.
+    pub fn peak_db(&self) -> f32 {
+        super::amplitude_to_db(self.peak_amplitude())
+    }
+
     /// Encode as WAV bytes (16-bit PCM mono) for cloud API upload.
     pub fn to_wav_bytes(&self) -> Result<Vec<u8>> {
         let spec = hound::WavSpec {

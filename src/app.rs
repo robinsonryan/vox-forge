@@ -84,8 +84,8 @@ impl App {
             }
         );
 
-        let mut recording_handle: Option<crate::audio::capture::RecordingHandle> = None;
-        let mut recording_start: Option<std::time::Instant> = None;
+        let mut recording: Option<(crate::audio::capture::RecordingHandle, std::time::Instant)> =
+            None;
 
         loop {
             // Process hotkey events with a timeout so we can poll VAD
@@ -118,7 +118,7 @@ impl App {
                 Ok(None) => break, // Channel closed
                 Err(_) => {
                     // Timeout -- check VAD if currently recording
-                    if let (Some(handle), Some(start)) = (&recording_handle, &recording_start) {
+                    if let Some((handle, start)) = &recording {
                         let samples = handle.current_samples();
                         let elapsed = start.elapsed();
                         let vad_result = vad.analyze(&samples, elapsed);
@@ -160,8 +160,7 @@ impl App {
                         println!("[recording] Started...");
                         match audio_capture.start_recording() {
                             Ok(handle) => {
-                                recording_handle = Some(handle);
-                                recording_start = Some(std::time::Instant::now());
+                                recording = Some((handle, std::time::Instant::now()));
                             }
                             Err(e) => {
                                 println!("[error] Audio capture failed: {e}");
@@ -175,23 +174,12 @@ impl App {
                     }
                     DictationCommand::StopRecording => {
                         crate::notify::notify_processing();
-                        if let Some(handle) = recording_handle.take() {
+                        if let Some((handle, _start)) = recording.take() {
                             let sample_count = handle.sample_count();
-                            recording_start = None;
                             match handle.stop() {
                                 Ok(buffer) => {
                                     // Show audio stats
-                                    let peak = buffer
-                                        .samples
-                                        .iter()
-                                        .map(|s| s.abs())
-                                        .fold(0.0_f32, f32::max);
-                                    #[allow(clippy::cast_possible_truncation)]
-                                    let peak_db = if peak > 0.0 {
-                                        20.0 * peak.log10()
-                                    } else {
-                                        -100.0
-                                    };
+                                    let peak_db = buffer.peak_db();
                                     println!(
                                         "[recording] Stopped. {}ms, {} samples, peak: {peak_db:.1} dB",
                                         buffer.duration_ms, sample_count,

@@ -58,7 +58,7 @@ pub fn draw(ui: &mut Ui, config: &mut Config) {
 
     // Wayland notice
     ui.add_space(crate::ui::theme::SECTION_SPACING);
-    if is_wayland() {
+    if crate::platform::is_wayland() {
         ui.group(|ui| {
             ui.colored_label(crate::ui::theme::WARNING, "Wayland Detected");
             ui.add_space(4.0);
@@ -73,12 +73,4 @@ pub fn draw(ui: &mut Ui, config: &mut Config) {
             );
         });
     }
-}
-
-/// Check whether the current session appears to be running under Wayland.
-fn is_wayland() -> bool {
-    std::env::var("WAYLAND_DISPLAY").is_ok()
-        || std::env::var("XDG_SESSION_TYPE")
-            .map(|v| v == "wayland")
-            .unwrap_or(false)
 }

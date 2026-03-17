@@ -124,10 +124,7 @@ fn compute_rms(samples: &[f32]) -> f32 {
 
 /// Convert an RMS value to decibels.
 fn rms_to_db(rms: f32) -> f32 {
-    if rms <= 0.0 {
-        return -100.0;
-    }
-    20.0 * rms.log10()
+    super::amplitude_to_db(rms)
 }
 
 #[cfg(test)]

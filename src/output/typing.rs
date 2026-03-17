@@ -24,7 +24,10 @@ impl TypingOutput {
             keystroke_delay_ms,
             auto_enter,
             auto_enter_delay_ms,
-            clipboard_apps,
+            clipboard_apps: clipboard_apps
+                .into_iter()
+                .map(|s| s.to_lowercase())
+                .collect(),
         }
     }
 
@@ -34,7 +37,7 @@ impl TypingOutput {
         let lower = app_executable.to_lowercase();
         self.clipboard_apps
             .iter()
-            .any(|app| lower.contains(&app.to_lowercase()))
+            .any(|app| lower.contains(app.as_str()))
     }
 }
 
@@ -44,7 +47,7 @@ impl super::TextOutput for TypingOutput {
             return super::clipboard::paste_text(text);
         }
 
-        if is_wayland() {
+        if crate::platform::is_wayland() {
             type_wayland(text, self.keystroke_delay_ms)?;
         } else {
             type_x11(text, self.keystroke_delay_ms)?;
@@ -64,13 +67,9 @@ impl super::TextOutput for TypingOutput {
     }
 }
 
-fn is_wayland() -> bool {
-    std::env::var("WAYLAND_DISPLAY").is_ok()
-}
-
 /// Send a Return keypress.
 fn send_enter() -> Result<()> {
-    if is_wayland() {
+    if crate::platform::is_wayland() {
         let status = std::process::Command::new("wtype")
             .args(["-k", "Return"])
             .status()
