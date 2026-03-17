@@ -8,7 +8,7 @@ Raw audio never leaves your machine — only text transcripts are sent to a clou
 
 1. Press a hotkey (default: `Alt+Shift+D`)
 2. Speak — recording stops automatically after a silence timeout
-3. Audio is transcribed locally via Whisper
+3. Audio is transcribed locally via Whisper (GPU-accelerated when available)
 4. The transcript is formatted by an LLM (Anthropic Claude or OpenAI GPT)
 5. The formatted text is typed at your cursor
 
@@ -16,32 +16,107 @@ Formatting is context-aware: Vox Forge detects the active application and adjust
 
 ## Requirements
 
-- Rust stable toolchain
-- A microphone
-- An API key for at least one LLM provider (Anthropic or OpenAI)
-- **Linux:** ALSA or PipeWire, `xdotool` (X11) or a Wayland compositor with IPC (Hyprland/Sway)
-- **Optional:** CUDA toolkit for GPU-accelerated transcription
+### System dependencies (Linux)
 
-## Installation
-
-### Build from source
+Install these packages before building:
 
 ```bash
-git clone https://github.com/yourusername/vox-forge.git
-cd vox-forge
+# Build essentials
+sudo apt install build-essential pkg-config cmake
+
+# Audio (ALSA/PipeWire)
+sudo apt install libasound2-dev
+
+# Display/input
+sudo apt install libxdo-dev              # X11 text input
+sudo apt install wtype wl-clipboard      # Wayland text input (if using Wayland)
+sudo apt install libxkbcommon-dev
+
+# GUI dependencies (egui/eframe)
+sudo apt install libgtk-3-dev libglib2.0-dev libatk1.0-dev
+sudo apt install libcairo2-dev libpango1.0-dev libgdk-pixbuf-2.0-dev
+
+# Desktop notifications
+sudo apt install libdbus-1-dev
+
+# TLS for API calls
+sudo apt install libssl-dev
+```
+
+### Rust toolchain
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+### API key
+
+An API key for at least one LLM provider (Anthropic or OpenAI) is required for text formatting. Transcription runs entirely locally.
+
+## GPU Support (CUDA)
+
+GPU acceleration dramatically improves transcription speed (sub-1 second vs ~10 seconds on CPU for typical recordings).
+
+### CUDA toolkit
+
+Install the [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) (version 12.8+ recommended):
+
+```bash
+# Example for Ubuntu 24.04 (check NVIDIA's site for your distro)
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+sudo apt-get -y install cuda-toolkit-12-8
+```
+
+### Building with CUDA
+
+```bash
+export PATH=/usr/local/cuda-12.8/bin:$PATH
+export CUDA_PATH=/usr/local/cuda-12.8
+export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
+export CMAKE_CUDA_ARCHITECTURES=89
+cargo build --release --features cuda
+```
+
+### NVIDIA Blackwell GPUs (RTX 5060/5070/5080/5090)
+
+Blackwell GPUs (compute capability 12.0) require special build flags. The native `sm_120` CUDA kernels in whisper.cpp are not yet stable, but targeting Ada Lovelace (`sm_89`) with PTX JIT compilation works reliably:
+
+- **Use CUDA Toolkit 12.8** — version 12.0 is too old, and 13.x has PTX compatibility issues with some drivers
+- **Set `CMAKE_CUDA_ARCHITECTURES=89`** — this produces PTX code that Blackwell JIT-compiles at runtime
+- First inference after startup takes ~8 seconds (JIT warmup); subsequent inferences run at full GPU speed
+
+When upstream whisper.cpp adds native Blackwell kernel support, you can remove the `CMAKE_CUDA_ARCHITECTURES` override and build with `-arch=native`.
+
+### CPU-only build
+
+If you don't have an NVIDIA GPU or prefer not to install CUDA:
+
+```bash
 cargo build --release
 ```
 
-### Install (Linux)
+Set `device = "cpu"` in your config. Transcription will take ~5-10 seconds depending on model size and CPU.
+
+## Installation
+
+### Build and install
 
 ```bash
-# Build
+# CPU-only
 cargo build --release
+
+# Or with CUDA (see GPU Support above for env vars)
+cargo build --release --features cuda
 
 # Install binary
 cp target/release/vox-forge ~/.local/bin/voxforge
+```
 
-# Install systemd user service
+### Systemd service (recommended)
+
+```bash
 mkdir -p ~/.config/systemd/user
 cp install/vox-forge.service ~/.config/systemd/user/
 systemctl --user daemon-reload
@@ -49,8 +124,6 @@ systemctl --user enable --now vox-forge.service
 ```
 
 ### Managing the daemon
-
-The daemon runs as a systemd user service. Use these commands to manage it:
 
 ```bash
 systemctl --user status vox-forge     # Check status
@@ -61,7 +134,19 @@ journalctl --user -u vox-forge -f     # Tail logs
 
 The service auto-starts on login and restarts automatically on crash.
 
-**Note:** Settings changes made in the GUI require a daemon restart to take effect. The daemon loads its configuration once at startup.
+**Note:** All settings changes require a daemon restart to take effect.
+
+### Upgrading
+
+```bash
+# Build new version (add --features cuda and env vars if using GPU)
+cargo build --release
+
+# Install and restart
+systemctl --user stop vox-forge
+cp target/release/vox-forge ~/.local/bin/voxforge
+systemctl --user start vox-forge
+```
 
 ## Configuration
 
@@ -74,15 +159,9 @@ Set your provider API key via environment variable or the `auth` command:
 export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
 
-# Or use the auth command
+# Or use the auth command (reads key from stdin for security)
 voxforge auth set anthropic
 voxforge auth set openai
-```
-
-Verify your key works:
-
-```bash
-voxforge auth verify
 ```
 
 ### Config file
@@ -106,7 +185,7 @@ voxforge settings
 provider = "whisper_local"  # or "openai_whisper"
 
 [transcription.whisper_local]
-model = "base"     # tiny, base, small, medium, large
+model = "medium"   # tiny, base, small, medium, large-v3
 device = "cuda"    # or "cpu"
 language = "en"
 
@@ -122,7 +201,10 @@ toggle = "Alt+Shift+D"
 mode = "push_to_talk"  # or "toggle"
 
 [audio]
-silence_timeout_s = 3.0
+silence_timeout_s = 5.0
+silence_margin_db = 6.0         # dB above noise floor for silence threshold
+auto_silence_calibration = true # auto-detect noise floor on startup
+pre_roll_ms = 500               # capture audio before hotkey press
 max_recording_s = 120
 
 [output]
@@ -130,23 +212,35 @@ method = "type"         # or "clipboard"
 auto_enter = true
 auto_enter_delay_ms = 2000
 keystroke_delay_ms = 5
-clipboard_apps = ["kitty", "alacritty", "GNOME Terminal"]
+clipboard_apps = ["kitty", "alacritty", "gnome-terminal"]
 
 [dictionary]
-custom_terms = ["Kubernetes", "GraphQL"]
+custom_terms = ["Kubernetes", "GraphQL", "Claude"]
 ```
 
-## Usage
+## Whisper models
 
-### Start the daemon
-
-If installed with systemd (recommended), the daemon starts automatically on login. Otherwise:
+Models are stored at `~/.local/share/voxforge/models/`. Download GGML models from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp):
 
 ```bash
-voxforge                      # Start daemon (foreground, with tray icon)
-voxforge daemon               # Start daemon explicitly
-voxforge daemon --background  # Start in background
+voxforge model list           # List downloaded models
+
+# Download models
+wget -P ~/.local/share/voxforge/models/ \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
 ```
+
+| Model | Size | CPU Speed | GPU Speed | Quality |
+|-------|------|-----------|-----------|---------|
+| tiny | 75MB | ~2s | <0.5s | Basic |
+| base | 142MB | ~3s | <0.5s | Good |
+| small | 466MB | ~5s | <0.5s | Better |
+| medium | 1.5GB | ~10s | <1s | Very good |
+| large-v3 | 3.1GB | ~15s | ~1s | Best |
+
+GPU speeds assume warm JIT cache after first inference.
+
+## Usage
 
 ### Control recording
 
@@ -157,50 +251,14 @@ voxforge stop     # Stop the daemon
 voxforge status   # Check daemon status
 ```
 
-### Settings GUI
-
-```bash
-voxforge settings             # Open settings window
-```
-
-After changing settings, restart the daemon:
-
-```bash
-systemctl --user restart vox-forge
-```
-
-### Whisper model management
-
-Models are stored at `~/.local/share/voxforge/models/`. Download GGML models from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp):
-
-```bash
-voxforge model list           # List downloaded models
-
-# Download models manually
-wget -P ~/.local/share/voxforge/models/ \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
-```
-
-Available models: `tiny` (~75MB), `base` (~142MB), `small` (~466MB), `medium` (~1.5GB), `large-v3` (~3.1GB).
-
-### Provider management
-
-```bash
-voxforge provider list              # List available providers
-voxforge provider set-stt whisper_local
-voxforge provider set-llm anthropic
-voxforge provider test              # Health check
-```
-
 ### Dictionary
 
 Add custom terms to improve recognition of domain-specific words:
 
 ```bash
 voxforge dict add "Kubernetes"
-voxforge dict add "GraphQL"
 voxforge dict list
-voxforge dict remove "GraphQL"
+voxforge dict remove "Kubernetes"
 ```
 
 ### Corrections
@@ -217,16 +275,15 @@ voxforge corrections clear
 
 ```bash
 voxforge test mic       # Test microphone input
-voxforge test hotkey    # Test hotkey registration
 voxforge test type      # Test text output simulation
 voxforge test context   # Detect active window
-voxforge test format    # Preview audio formatting
+voxforge test format    # Preview fallback formatting
 voxforge devices        # List audio input devices
 ```
 
 ## Wayland
 
-Global hotkeys require compositor support on Wayland. Bind your compositor's hotkey to send a toggle command:
+Global hotkeys require compositor support on Wayland. The daemon falls back to IPC commands, so bind your compositor's hotkey to send a toggle command:
 
 **Hyprland** (`~/.config/hypr/hyprland.conf`):
 ```
@@ -238,21 +295,30 @@ bind = ALT_SHIFT, D, exec, voxforge toggle
 bindsym Alt+Shift+d exec voxforge toggle
 ```
 
+Wayland text input requires `wtype` and `wl-clipboard`:
+```bash
+sudo apt install wtype wl-clipboard
+```
+
 ## Architecture
 
 ```
 src/
 ├── main.rs          # CLI wiring and dependency injection
 ├── cli.rs           # Command parsing (clap)
-├── app.rs           # Core dictation state machine
+├── app.rs           # Core dictation pipeline and daemon loop
 ├── config.rs        # TOML config with defaults
 ├── error.rs         # Shared error types
-├── audio/           # Audio capture and voice activity detection
-├── context/         # Active window detection
-├── corrections.rs   # Correction history
+├── state.rs         # Dictation state machine
+├── audio/           # Audio capture with pre-roll buffer and VAD
+├── context/         # Active window detection (Hyprland, Sway, X11)
+├── corrections.rs   # Correction history for few-shot learning
 ├── dictionary.rs    # Custom term management
-├── format/          # LLM formatting prompts
-├── output/          # Text delivery (typing / clipboard)
+├── format/          # LLM formatting prompts and fallback formatter
+├── hotkey/          # Global hotkey registration
+├── ipc.rs           # Unix domain socket IPC for daemon control
+├── notify.rs        # Desktop notifications
+├── output/          # Text delivery (typing simulation / clipboard paste)
 ├── platform/        # OS-specific code (Linux, Windows)
 ├── providers/       # STT and LLM provider traits + implementations
 └── ui/              # egui settings GUI and system tray
@@ -263,6 +329,8 @@ src/
 - Platform-specific code is isolated in `src/platform/`
 - The GUI communicates with the daemon via channels, never calling async directly
 - Audio stays local; only text is sent to cloud APIs
+- Microphone runs continuously with a circular pre-roll buffer so speech before the hotkey press is captured
+- Silence threshold auto-calibrates from ambient noise on startup
 
 ## Development
 
@@ -270,7 +338,8 @@ src/
 cargo fmt --check                  # Check formatting
 cargo clippy -- -D warnings        # Lint
 cargo test                         # Run tests
-cargo build --release              # Release build
+cargo build --release              # Release build (CPU)
+cargo build --release --features cuda  # Release build (GPU)
 ```
 
 ## License
