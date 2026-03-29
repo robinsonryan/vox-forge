@@ -21,6 +21,7 @@ mod notify;
 mod output;
 mod platform;
 mod providers;
+mod sidecar;
 mod state;
 mod ui;
 
@@ -139,6 +140,42 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
         }
     }
 
+    // Start vLLM sidecar if needed for the selected STT provider
+    let (venv_path, endpoint) = match config.transcription.provider.as_str() {
+        "cohere_transcribe" => (
+            config.transcription.cohere_transcribe.venv_path.clone(),
+            config.transcription.cohere_transcribe.endpoint.clone(),
+        ),
+        "voxtral" => (
+            config.transcription.voxtral.venv_path.clone(),
+            config.transcription.voxtral.endpoint.clone(),
+        ),
+        _ => (String::new(), String::new()),
+    };
+
+    let mut vllm_sidecar: Option<sidecar::VllmSidecar> = None;
+    if let Some(sidecar_config) = sidecar::sidecar_config_for_provider(
+        &config.transcription.provider,
+        std::path::PathBuf::from(&venv_path),
+        &endpoint,
+    ) {
+        info!(
+            "Starting vLLM sidecar for {} provider",
+            config.transcription.provider
+        );
+        match sidecar::VllmSidecar::spawn(&sidecar_config).await {
+            Ok(s) => {
+                info!("vLLM sidecar ready at {}", s.endpoint);
+                vllm_sidecar = Some(s);
+            }
+            Err(e) => {
+                tracing::error!("Failed to start vLLM sidecar: {e}");
+                tracing::error!("Start vLLM manually or switch to a different STT provider");
+                return Err(e);
+            }
+        }
+    }
+
     // Create providers
     let stt = providers::registry::create_stt_provider(&config, platform.models_dir())?;
     let llm = providers::registry::create_llm_provider(&config)?;
@@ -179,7 +216,7 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
     // Shutdown signal: watch channel shared with tray, IPC, and signal handler
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-    let _tray_handle = spawn_tray(hotkey_tx.clone(), shutdown_tx.clone()).await;
+    let tray_handle = spawn_tray(hotkey_tx.clone(), shutdown_tx.clone()).await;
     spawn_ipc(platform.as_ref(), hotkey_tx.clone(), shutdown_tx.clone());
 
     // Graceful SIGTERM/SIGINT handling
@@ -194,8 +231,21 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
     }
 
     // Create and run the app
-    let mut app = app::App::new(config, stt, llm, window_detector, output, correction_log);
+    let mut app = app::App::new(
+        config,
+        stt,
+        llm,
+        window_detector,
+        output,
+        correction_log,
+        tray_handle,
+    );
     app.run_daemon(hotkey_rx, shutdown_rx).await?;
+
+    // Shut down the vLLM sidecar if we started one.
+    if let Some(ref mut sc) = vllm_sidecar {
+        sc.shutdown().await;
+    }
 
     info!("Daemon shut down cleanly");
     Ok(())

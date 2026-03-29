@@ -12,6 +12,8 @@ use crate::error::Result;
 pub enum SttProviderType {
     WhisperLocal,
     OpenaiWhisper,
+    CohereTranscribe,
+    Voxtral,
 }
 
 /// Compute device for local inference.
@@ -99,6 +101,18 @@ mod tests {
         let api = SttProviderType::OpenaiWhisper;
         let json = serde_json::to_string(&api).expect("serialize");
         assert_eq!(json, "\"openai_whisper\"");
+
+        let cohere = SttProviderType::CohereTranscribe;
+        let json = serde_json::to_string(&cohere).expect("serialize");
+        assert_eq!(json, "\"cohere_transcribe\"");
+        let back: SttProviderType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, SttProviderType::CohereTranscribe);
+
+        let voxtral = SttProviderType::Voxtral;
+        let json = serde_json::to_string(&voxtral).expect("serialize");
+        assert_eq!(json, "\"voxtral\"");
+        let back: SttProviderType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, SttProviderType::Voxtral);
     }
 
     #[test]

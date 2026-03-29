@@ -16,23 +16,42 @@ pub fn draw(ui: &mut Ui, config: &mut Config, state: &mut TranscriptionTabState)
     ui.heading("Transcription Provider");
     ui.add_space(8.0);
 
-    // Provider selector
-    let is_local = config.transcription.provider == "whisper_local";
+    // Provider selector — snapshot the current value to avoid borrow conflicts in closures.
+    let provider = config.transcription.provider.clone();
     ui.horizontal(|ui| {
-        if ui.radio(is_local, "Local Whisper").clicked() {
+        if ui
+            .radio(provider == "whisper_local", "Local Whisper")
+            .clicked()
+        {
             config.transcription.provider = "whisper_local".to_string();
         }
-        if ui.radio(!is_local, "OpenAI Whisper").clicked() {
+        if ui
+            .radio(provider == "openai_whisper", "OpenAI Whisper")
+            .clicked()
+        {
             config.transcription.provider = "openai_whisper".to_string();
+        }
+    });
+    let provider = config.transcription.provider.clone();
+    ui.horizontal(|ui| {
+        if ui
+            .radio(provider == "cohere_transcribe", "Cohere Transcribe")
+            .clicked()
+        {
+            config.transcription.provider = "cohere_transcribe".to_string();
+        }
+        if ui.radio(provider == "voxtral", "Voxtral").clicked() {
+            config.transcription.provider = "voxtral".to_string();
         }
     });
 
     ui.separator();
 
-    if is_local {
-        draw_local_whisper(ui, config);
-    } else {
-        draw_openai_whisper(ui, config, state);
+    match config.transcription.provider.as_str() {
+        "openai_whisper" => draw_openai_whisper(ui, config, state),
+        "cohere_transcribe" => draw_cohere_transcribe(ui, config),
+        "voxtral" => draw_voxtral(ui, config),
+        _ => draw_local_whisper(ui, config),
     }
 
     // Advanced audio settings (collapsible)
@@ -141,6 +160,48 @@ fn draw_openai_whisper(ui: &mut Ui, config: &mut Config, state: &mut Transcripti
         ui.colored_label(
             crate::ui::theme::WARNING,
             "Note: Audio is sent to OpenAI's servers for transcription",
+        );
+    });
+}
+
+fn draw_cohere_transcribe(ui: &mut Ui, config: &mut Config) {
+    ui.group(|ui| {
+        ui.label("Cohere Transcribe Settings");
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            ui.label("vLLM Endpoint:");
+            ui.text_edit_singleline(&mut config.transcription.cohere_transcribe.endpoint);
+        });
+
+        ui.add_space(4.0);
+        ui.label("Model: CohereLabs/cohere-transcribe-03-2026");
+        ui.label("2B params | ~4-6 GB VRAM | 5.42% WER");
+        ui.add_space(4.0);
+        ui.colored_label(
+            crate::ui::theme::MUTED,
+            "Requires vLLM sidecar: vllm serve CohereLabs/cohere-transcribe-03-2026 --trust-remote-code",
+        );
+    });
+}
+
+fn draw_voxtral(ui: &mut Ui, config: &mut Config) {
+    ui.group(|ui| {
+        ui.label("Voxtral Settings");
+        ui.add_space(4.0);
+
+        ui.horizontal(|ui| {
+            ui.label("vLLM Endpoint:");
+            ui.text_edit_singleline(&mut config.transcription.voxtral.endpoint);
+        });
+
+        ui.add_space(4.0);
+        ui.label("Model: mistralai/Voxtral-Mini-3B-2507");
+        ui.label("3B params | ~6 GB VRAM | 8 languages");
+        ui.add_space(4.0);
+        ui.colored_label(
+            crate::ui::theme::MUTED,
+            "Requires vLLM sidecar: vllm serve mistralai/Voxtral-Mini-3B-2507 --tokenizer_mode mistral --config_format mistral --load_format mistral",
         );
     });
 }

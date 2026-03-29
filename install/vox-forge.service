@@ -5,7 +5,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/vox-forge daemon
+ExecStart=%h/.local/bin/voxforge daemon
 Restart=on-failure
 RestartSec=3
 

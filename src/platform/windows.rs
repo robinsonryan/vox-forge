@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 
 use super::{DaemonLock, PermissionIssue, Platform};
 
-const APP_DIR_NAME: &str = "VoxForge";
+const APP_DIR_NAME: &str = "voxforge";
 
 /// Windows platform stub.
 pub struct WindowsPlatform {
@@ -23,15 +23,15 @@ pub struct WindowsPlatform {
 impl WindowsPlatform {
     pub fn new() -> Self {
         let config = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("C:\\ProgramData\\VoxForge"))
+            .unwrap_or_else(|| PathBuf::from("C:\\ProgramData\\voxforge"))
             .join(APP_DIR_NAME);
 
         let data = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("C:\\ProgramData\\VoxForge"))
+            .unwrap_or_else(|| PathBuf::from("C:\\ProgramData\\voxforge"))
             .join(APP_DIR_NAME);
 
         let cache = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("C:\\Temp\\VoxForge"))
+            .unwrap_or_else(|| PathBuf::from("C:\\Temp\\voxforge"))
             .join(APP_DIR_NAME);
 
         Self {

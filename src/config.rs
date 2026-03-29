@@ -75,6 +75,12 @@ pub struct TranscriptionConfig {
 
     #[serde(default)]
     pub openai_whisper: OpenAiWhisperConfig,
+
+    #[serde(default)]
+    pub cohere_transcribe: CohereTranscribeConfig,
+
+    #[serde(default)]
+    pub voxtral: VoxtralConfig,
 }
 
 impl Default for TranscriptionConfig {
@@ -83,6 +89,8 @@ impl Default for TranscriptionConfig {
             provider: default_transcription_provider(),
             whisper_local: WhisperLocalConfig::default(),
             openai_whisper: OpenAiWhisperConfig::default(),
+            cohere_transcribe: CohereTranscribeConfig::default(),
+            voxtral: VoxtralConfig::default(),
         }
     }
 }
@@ -127,6 +135,46 @@ impl Default for OpenAiWhisperConfig {
             api_key: String::new(),
             model: default_openai_whisper_model(),
             language: default_language(),
+        }
+    }
+}
+
+// ─── Cohere Transcribe (vLLM) ────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CohereTranscribeConfig {
+    #[serde(default = "default_cohere_endpoint")]
+    pub endpoint: String,
+
+    #[serde(default = "default_vllm_venv_path")]
+    pub venv_path: String,
+}
+
+impl Default for CohereTranscribeConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: default_cohere_endpoint(),
+            venv_path: default_vllm_venv_path(),
+        }
+    }
+}
+
+// ─── Voxtral (vLLM) ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoxtralConfig {
+    #[serde(default = "default_voxtral_endpoint")]
+    pub endpoint: String,
+
+    #[serde(default = "default_vllm_venv_path")]
+    pub venv_path: String,
+}
+
+impl Default for VoxtralConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: default_voxtral_endpoint(),
+            venv_path: default_vllm_venv_path(),
         }
     }
 }
@@ -409,6 +457,23 @@ fn default_language() -> String {
 
 fn default_openai_whisper_model() -> String {
     "whisper-1".to_string()
+}
+
+fn default_vllm_venv_path() -> String {
+    dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from(".local/share"))
+        .join("voxforge")
+        .join("vllm-env")
+        .to_string_lossy()
+        .to_string()
+}
+
+fn default_cohere_endpoint() -> String {
+    "http://localhost:8000".to_string()
+}
+
+fn default_voxtral_endpoint() -> String {
+    "http://localhost:8000".to_string()
 }
 
 fn default_formatting_provider() -> String {

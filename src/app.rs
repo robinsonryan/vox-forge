@@ -16,6 +16,7 @@ use crate::output::typing::TypingOutput;
 use crate::providers::llm::LlmProvider;
 use crate::providers::stt::SttProvider;
 use crate::state::{DictationCommand, DictationEvent, DictationStateMachine};
+use crate::ui::tray::{TrayHandle, TrayState};
 
 /// Core application that runs the dictation pipeline.
 pub struct App {
@@ -26,6 +27,7 @@ pub struct App {
     output: TypingOutput,
     correction_log: CorrectionLog,
     state_machine: DictationStateMachine,
+    tray: Option<TrayHandle>,
 }
 
 impl App {
@@ -36,6 +38,7 @@ impl App {
         window_detector: Box<dyn WindowDetector>,
         output: TypingOutput,
         correction_log: CorrectionLog,
+        tray: Option<TrayHandle>,
     ) -> Self {
         Self {
             config,
@@ -45,6 +48,13 @@ impl App {
             output,
             correction_log,
             state_machine: DictationStateMachine::new(),
+            tray,
+        }
+    }
+
+    async fn set_tray_state(&self, state: TrayState) {
+        if let Some(ref tray) = self.tray {
+            tray.set_state(state).await;
         }
     }
 
@@ -184,6 +194,7 @@ impl App {
 
                 match command {
                     DictationCommand::StartRecording => {
+                        self.set_tray_state(TrayState::Recording).await;
                         crate::notify::notify_recording();
                         tracing::info!("[recording] Started...");
                         match audio_capture.start_recording() {
@@ -197,10 +208,12 @@ impl App {
                                     .handle_event(DictationEvent::ErrorOccurred {
                                         message: e.to_string(),
                                     });
+                                self.set_tray_state(TrayState::Idle).await;
                             }
                         }
                     }
                     DictationCommand::StopRecording => {
+                        self.set_tray_state(TrayState::Processing).await;
                         crate::notify::notify_processing();
                         if let Some((handle, _start)) = recording.take() {
                             let sample_count = handle.sample_count();
@@ -297,7 +310,7 @@ impl App {
             });
 
         // Step 4: Output
-        self.output_text(&formatted, &context.executable);
+        self.output_text(&formatted, &context.executable).await;
 
         // Log the dictation for corrections
         let _ = self
@@ -394,7 +407,7 @@ impl App {
         }
     }
 
-    fn output_text(&mut self, formatted: &str, executable: &str) {
+    async fn output_text(&mut self, formatted: &str, executable: &str) {
         tracing::info!("[typing] Outputting text...");
         match self.output.output_text(formatted, executable) {
             Ok(()) => {
@@ -413,6 +426,7 @@ impl App {
 
         self.state_machine
             .handle_event(DictationEvent::OutputComplete);
+        self.set_tray_state(TrayState::Idle).await;
     }
 }
 
@@ -435,6 +449,7 @@ mod tests {
             Box<dyn WindowDetector>,
             TypingOutput,
             CorrectionLog,
+            Option<TrayHandle>,
         ) -> App = App::new;
 
         // Verify FallbackDetector satisfies WindowDetector

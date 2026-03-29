@@ -13,6 +13,7 @@ use super::llm_anthropic::AnthropicProvider;
 use super::llm_openai::OpenAiProvider;
 use super::stt::SttProvider;
 use super::stt_openai_whisper::OpenAiWhisperProvider;
+use super::stt_vllm_transcribe::{VllmSttModel, VllmTranscribeProvider};
 use super::stt_whisper_local::WhisperLocalProvider;
 
 use super::stt::ComputeDevice;
@@ -45,8 +46,26 @@ pub fn create_stt_provider(config: &Config, models_dir: PathBuf) -> Result<Box<d
             let provider = OpenAiWhisperProvider::new(&api_key, &ow.model, &ow.language)?;
             Ok(Box::new(provider))
         }
+        "cohere_transcribe" => {
+            let ct = &config.transcription.cohere_transcribe;
+            let provider = VllmTranscribeProvider::new(
+                &ct.endpoint,
+                "CohereLabs/cohere-transcribe-03-2026",
+                VllmSttModel::CohereTranscribe,
+            )?;
+            Ok(Box::new(provider))
+        }
+        "voxtral" => {
+            let vx = &config.transcription.voxtral;
+            let provider = VllmTranscribeProvider::new(
+                &vx.endpoint,
+                "mistralai/Voxtral-Mini-3B-2507",
+                VllmSttModel::Voxtral,
+            )?;
+            Ok(Box::new(provider))
+        }
         other => Err(Error::Provider(format!(
-            "Unknown STT provider: '{other}' (expected 'whisper_local' or 'openai_whisper')"
+            "Unknown STT provider: '{other}' (expected 'whisper_local', 'openai_whisper', 'cohere_transcribe', or 'voxtral')"
         ))),
     }
 }
@@ -180,6 +199,31 @@ mod tests {
         config.formatting.provider = "unknown".to_string();
         let result = create_llm_provider(&config);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn create_stt_cohere_transcribe() {
+        let mut config = Config::default();
+        config.transcription.provider = "cohere_transcribe".to_string();
+        let models_dir = PathBuf::from("/tmp/voxforge-test-models");
+        let result = create_stt_provider(&config, models_dir);
+        assert!(result.is_ok());
+        let provider = result.expect("provider created");
+        assert_eq!(provider.display_name(), "Cohere Transcribe");
+        assert!(provider.is_local());
+        assert!(!provider.requires_api_key());
+    }
+
+    #[test]
+    fn create_stt_voxtral() {
+        let mut config = Config::default();
+        config.transcription.provider = "voxtral".to_string();
+        let models_dir = PathBuf::from("/tmp/voxforge-test-models");
+        let result = create_stt_provider(&config, models_dir);
+        assert!(result.is_ok());
+        let provider = result.expect("provider created");
+        assert_eq!(provider.display_name(), "Voxtral");
+        assert!(provider.is_local());
     }
 
     #[test]

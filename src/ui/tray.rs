@@ -2,6 +2,8 @@
 //!
 //! Uses the [`ksni`] crate on Linux for native async tray support.
 //! Communicates with the main app via a channel of [`TrayAction`]s.
+//! Displays three visual states via custom SVG icons embedded at compile time:
+//! idle (system mic), recording (red), and processing (amber).
 
 use tokio::sync::mpsc;
 
@@ -16,69 +18,124 @@ pub enum TrayAction {
     Quit,
 }
 
+/// Visual state of the tray icon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrayState {
+    /// Waiting for hotkey.
+    Idle,
+    /// Actively recording.
+    Recording,
+    /// Transcribing or formatting.
+    Processing,
+}
+
 /// Handle to a running tray icon, used to update its state.
 #[cfg(target_os = "linux")]
 pub struct TrayHandle {
-    #[allow(dead_code)]
     inner: ksni::Handle<VoxForgeTray>,
 }
 
 #[cfg(target_os = "linux")]
 impl TrayHandle {
-    /// Update the tray to show recording state.
-    #[allow(dead_code)]
-    pub async fn set_recording(&self, recording: bool) {
-        self.inner
-            .update(move |tray| tray.recording = recording)
-            .await;
+    /// Update the tray icon to reflect the given state.
+    pub async fn set_state(&self, state: TrayState) {
+        self.inner.update(move |tray| tray.state = state).await;
     }
 }
 
-/// The tray icon state, implementing the `ksni::Tray` trait.
+// ─── SVG icon rendering ─────────────────────────────────────────────
+
+/// Embedded SVG sources (compiled into the binary).
+const SVG_IDLE: &[u8] = include_bytes!("../../assets/tray-idle.svg");
+const SVG_RECORDING: &[u8] = include_bytes!("../../assets/tray-recording.svg");
+const SVG_PROCESSING: &[u8] = include_bytes!("../../assets/tray-processing.svg");
+
+/// Target icon size in pixels.
+const ICON_SIZE: u32 = 24;
+
+/// Render an SVG to a ksni `Icon` in ARGB32 format.
+#[allow(clippy::cast_possible_truncation)]
+fn render_svg_icon(svg_data: &[u8]) -> ksni::Icon {
+    let tree = resvg::usvg::Tree::from_data(svg_data, &resvg::usvg::Options::default())
+        .expect("embedded SVG must be valid");
+
+    let mut pixmap =
+        resvg::tiny_skia::Pixmap::new(ICON_SIZE, ICON_SIZE).expect("valid pixmap size");
+
+    // Scale SVG to fit the target icon size.
+    let svg_size = tree.size();
+    let scale_x = f32::from(ICON_SIZE as u16) / svg_size.width();
+    let scale_y = f32::from(ICON_SIZE as u16) / svg_size.height();
+    let transform = resvg::tiny_skia::Transform::from_scale(scale_x, scale_y);
+
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    // Convert from RGBA (tiny_skia) to ARGB (ksni/D-Bus), both premultiplied.
+    let rgba = pixmap.data();
+    let pixel_count = (ICON_SIZE * ICON_SIZE) as usize;
+    let mut argb = Vec::with_capacity(pixel_count * 4);
+
+    for chunk in rgba.chunks_exact(4) {
+        let (r, g, b, a) = (chunk[0], chunk[1], chunk[2], chunk[3]);
+        argb.push(a);
+        argb.push(r);
+        argb.push(g);
+        argb.push(b);
+    }
+
+    #[allow(clippy::cast_possible_wrap)]
+    ksni::Icon {
+        width: ICON_SIZE as i32,
+        height: ICON_SIZE as i32,
+        data: argb,
+    }
+}
+
+// ─── Tray implementation ────────────────────────────────────────────
+
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
 struct VoxForgeTray {
     tx: mpsc::UnboundedSender<TrayAction>,
-    recording: bool,
+    state: TrayState,
 }
 
 #[cfg(target_os = "linux")]
 impl ksni::Tray for VoxForgeTray {
     fn id(&self) -> String {
-        "vox-forge".into()
+        "voxforge".into()
     }
 
     fn icon_name(&self) -> String {
-        if self.recording {
-            "media-record".into()
-        } else {
-            "audio-input-microphone".into()
-        }
+        // Empty so the pixmap is used.
+        String::new()
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        let svg = match self.state {
+            TrayState::Idle => SVG_IDLE,
+            TrayState::Recording => SVG_RECORDING,
+            TrayState::Processing => SVG_PROCESSING,
+        };
+        vec![render_svg_icon(svg)]
     }
 
     fn title(&self) -> String {
-        if self.recording {
-            "VoxForge (Recording...)".into()
-        } else {
-            "VoxForge".into()
+        match self.state {
+            TrayState::Idle => "VoxForge".into(),
+            TrayState::Recording => "VoxForge (Recording)".into(),
+            TrayState::Processing => "VoxForge (Processing)".into(),
         }
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
-        ksni::ToolTip {
-            title: if self.recording {
-                "VoxForge — Recording...".into()
-            } else {
-                "VoxForge — Voice Dictation".into()
-            },
-            ..Default::default()
-        }
+        ksni::ToolTip::default()
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::{MenuItem, StandardItem};
 
-        let toggle_label = if self.recording {
+        let toggle_label = if self.state == TrayState::Recording {
             "Stop Recording"
         } else {
             "Toggle Recording"
@@ -133,7 +190,7 @@ pub async fn spawn_tray() -> crate::error::Result<(mpsc::UnboundedReceiver<TrayA
 
     let tray = VoxForgeTray {
         tx,
-        recording: false,
+        state: TrayState::Idle,
     };
 
     let handle = tray
@@ -149,7 +206,7 @@ pub struct TrayHandle;
 
 #[cfg(not(target_os = "linux"))]
 impl TrayHandle {
-    pub async fn set_recording(&self, _recording: bool) {}
+    pub async fn set_state(&self, _state: TrayState) {}
 }
 
 #[cfg(not(target_os = "linux"))]
