@@ -1,6 +1,6 @@
 # Vox Forge
 
-Voice dictation for the desktop. Record speech, transcribe it locally with Whisper, format it with an LLM, and type it into whatever app has focus.
+Voice dictation for the desktop. Record speech, transcribe it locally, format it with an LLM, and type it into whatever app has focus.
 
 Raw audio never leaves your machine — only text transcripts are sent to a cloud API for formatting.
 
@@ -8,9 +8,11 @@ Raw audio never leaves your machine — only text transcripts are sent to a clou
 
 1. Press a hotkey (default: `Alt+Shift+D`)
 2. Speak — recording stops automatically after a silence timeout
-3. Audio is transcribed locally via Whisper (GPU-accelerated when available)
+3. Audio is transcribed locally via Whisper, Cohere Transcribe, or Voxtral (GPU-accelerated when available)
 4. The transcript is formatted by an LLM (Anthropic Claude or OpenAI GPT)
 5. The formatted text is typed at your cursor
+
+The system tray icon reflects the current state: idle (default), recording (red), or processing (amber).
 
 Formatting is context-aware: Vox Forge detects the active application and adjusts output style for code editors, email clients, chat apps, or general prose.
 
@@ -52,6 +54,42 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ### API key
 
 An API key for at least one LLM provider (Anthropic or OpenAI) is required for text formatting. Transcription runs entirely locally.
+
+### Local STT via vLLM (optional)
+
+Cohere Transcribe and Voxtral Mini can be used as alternatives to Whisper. Both are served via vLLM, which VoxForge manages as a sidecar process — it starts automatically with the daemon and stops on shutdown.
+
+```bash
+# Create a dedicated venv for vLLM
+python3 -m venv ~/.local/share/voxforge/vllm-env
+
+# Install vLLM with audio support (nightly required for Cohere Transcribe)
+~/.local/share/voxforge/vllm-env/bin/pip install --pre vllm --extra-index-url https://wheels.vllm.ai/nightly
+~/.local/share/voxforge/vllm-env/bin/pip install "vllm[audio]"
+```
+
+**Cohere Transcribe** (2B params, ~4-6 GB VRAM) — requires a free [HuggingFace](https://huggingface.co/join) account to accept the gated model license:
+
+```bash
+# Accept license at https://huggingface.co/CohereLabs/cohere-transcribe-03-2026
+~/.local/share/voxforge/vllm-env/bin/huggingface-cli login
+~/.local/share/voxforge/vllm-env/bin/huggingface-cli download CohereLabs/cohere-transcribe-03-2026
+```
+
+Store your HuggingFace token for the sidecar (owner-only permissions):
+
+```bash
+echo 'hf_YOUR_TOKEN' > ~/.config/vox-forge/hf_token
+chmod 600 ~/.config/vox-forge/hf_token
+```
+
+**Voxtral Mini** (3B params, ~6-9 GB VRAM) — no gated license:
+
+```bash
+~/.local/share/voxforge/vllm-env/bin/huggingface-cli download mistralai/Voxtral-Mini-3B-2507
+```
+
+> **VRAM note:** Cohere Transcribe fits on 8 GB GPUs. Voxtral Mini requires more than 8 GB in BF16 and will OOM on smaller cards.
 
 ## GPU Support (CUDA)
 
@@ -182,12 +220,20 @@ voxforge settings
 
 ```toml
 [transcription]
-provider = "whisper_local"  # or "openai_whisper"
+provider = "whisper_local"  # "whisper_local", "openai_whisper", "cohere_transcribe", or "voxtral"
 
 [transcription.whisper_local]
 model = "medium"   # tiny, base, small, medium, large-v3
 device = "cuda"    # or "cpu"
 language = "en"
+
+[transcription.cohere_transcribe]
+endpoint = "http://localhost:8000"                         # vLLM server URL
+venv_path = "~/.local/share/voxforge/vllm-env"            # Python venv with vLLM
+
+[transcription.voxtral]
+endpoint = "http://localhost:8000"
+venv_path = "~/.local/share/voxforge/vllm-env"
 
 [formatting]
 provider = "anthropic"  # or "openai"
@@ -201,8 +247,8 @@ toggle = "Alt+Shift+D"
 mode = "push_to_talk"  # or "toggle"
 
 [audio]
-silence_timeout_s = 5.0
-silence_margin_db = 6.0         # dB above noise floor for silence threshold
+silence_timeout_s = 3.0
+silence_margin_db = 10.0        # dB above noise floor for silence threshold
 auto_silence_calibration = true # auto-detect noise floor on startup
 pre_roll_ms = 500               # capture audio before hotkey press
 max_recording_s = 120
@@ -239,6 +285,17 @@ wget -P ~/.local/share/voxforge/models/ \
 | large-v3 | 3.1GB | ~15s | ~1s | Best |
 
 GPU speeds assume warm JIT cache after first inference.
+
+### Local STT alternatives
+
+Cohere Transcribe and Voxtral Mini are next-generation ASR models served via vLLM. VoxForge manages the vLLM process automatically as a sidecar — it spawns on daemon start and stops on shutdown (allow 30-90 seconds for model loading).
+
+| Model | Params | VRAM | Speed | WER | Notes |
+|-------|--------|------|-------|-----|-------|
+| Cohere Transcribe | 2B | ~4-6 GB | ~500ms | 5.42% | #1 on Open ASR Leaderboard, requires HF auth |
+| Voxtral Mini | 3B | ~6-9 GB | — | — | Auto language detection, needs >8 GB VRAM |
+
+Set `provider = "cohere_transcribe"` or `provider = "voxtral"` in the `[transcription]` section of your config. See [Local STT via vLLM](#local-stt-via-vllm-optional) for setup.
 
 ## Usage
 
@@ -303,25 +360,27 @@ sudo apt install wtype wl-clipboard
 ## Architecture
 
 ```
+assets/               # SVG tray icons (idle, recording, processing)
 src/
-├── main.rs          # CLI wiring and dependency injection
-├── cli.rs           # Command parsing (clap)
-├── app.rs           # Core dictation pipeline and daemon loop
-├── config.rs        # TOML config with defaults
-├── error.rs         # Shared error types
-├── state.rs         # Dictation state machine
-├── audio/           # Audio capture with pre-roll buffer and VAD
-├── context/         # Active window detection (Hyprland, Sway, X11)
-├── corrections.rs   # Correction history for few-shot learning
-├── dictionary.rs    # Custom term management
-├── format/          # LLM formatting prompts and fallback formatter
-├── hotkey/          # Global hotkey registration
-├── ipc.rs           # Unix domain socket IPC for daemon control
-├── notify.rs        # Desktop notifications
-├── output/          # Text delivery (typing simulation / clipboard paste)
-├── platform/        # OS-specific code (Linux, Windows)
-├── providers/       # STT and LLM provider traits + implementations
-└── ui/              # egui settings GUI and system tray
+├── main.rs           # CLI wiring and dependency injection
+├── cli.rs            # Command parsing (clap)
+├── app.rs            # Core dictation pipeline and daemon loop
+├── config.rs         # TOML config with defaults
+├── error.rs          # Shared error types
+├── sidecar.rs        # vLLM child process lifecycle management
+├── state.rs          # Dictation state machine
+├── audio/            # Audio capture with pre-roll buffer and VAD
+├── context/          # Active window detection (Hyprland, Sway, X11)
+├── corrections.rs    # Correction history for few-shot learning
+├── dictionary.rs     # Custom term management
+├── format/           # LLM formatting prompts and fallback formatter
+├── hotkey/           # Global hotkey registration
+├── ipc.rs            # Unix domain socket IPC for daemon control
+├── notify.rs         # Desktop notifications
+├── output/           # Text delivery (typing simulation / clipboard paste)
+├── platform/         # OS-specific code (Linux, Windows)
+├── providers/        # STT and LLM provider traits + implementations
+└── ui/               # egui settings GUI and system tray
 ```
 
 **Design principles:**
@@ -331,6 +390,7 @@ src/
 - Audio stays local; only text is sent to cloud APIs
 - Microphone runs continuously with a circular pre-roll buffer so speech before the hotkey press is captured
 - Silence threshold auto-calibrates from ambient noise on startup
+- vLLM-based STT providers are managed as sidecar child processes with health-check polling
 
 ## Development
 

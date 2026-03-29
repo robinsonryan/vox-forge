@@ -16,9 +16,11 @@ See `.claude/constitution.md` for module decision tree and conventions.
 - `src/cli.rs` — clap argument parsing
 - `src/config.rs` — TOML configuration loading
 - `src/error.rs` — Shared error types
-- `src/providers/` — Swappable backends behind traits
+- `src/sidecar.rs` — vLLM child process lifecycle (spawn, health poll, shutdown)
+- `src/providers/` — Swappable backends behind traits (Whisper, Cohere, Voxtral, Anthropic, OpenAI)
 - `src/platform/` — OS-specific code behind Platform trait
-- `src/ui/` — egui GUI (communicates via channels)
+- `src/ui/` — egui GUI (communicates via channels), system tray with SVG icons
+- `assets/` — SVG tray icons (idle, recording, processing)
 
 ## Rules
 
