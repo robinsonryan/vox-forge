@@ -1,3 +1,9 @@
 /target
 .env
 *.pdb
+
+# Claude harness symlinks (managed via ~/dev/claude-harness/link.sh)
+# Keep project-specific CLAUDE.md and settings.json tracked.
+/.claude/*
+!/.claude/CLAUDE.md
+!/.claude/settings.json
