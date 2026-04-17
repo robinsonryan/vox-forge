@@ -85,6 +85,12 @@ async fn main() -> Result<()> {
         Some(Command::Status) => {
             check_daemon_status(platform.as_ref()).await;
         }
+        Some(Command::Recalibrate) => {
+            send_ipc_command(platform.as_ref(), ipc::IpcCommand::Recalibrate).await?;
+        }
+        Some(Command::ReloadConfig) => {
+            send_ipc_command(platform.as_ref(), ipc::IpcCommand::ReloadConfig).await?;
+        }
         Some(Command::Dictate { mode, timeout: _ }) => {
             info!("One-shot dictate mode: {mode}");
             println!("One-shot dictation not yet implemented. Use 'voxforge daemon' instead.");
@@ -128,6 +134,7 @@ async fn main() -> Result<()> {
 
 // ─── Daemon ─────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_lines)]
 async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform>) -> Result<()> {
     // Prevent multiple daemon instances
     let _lock = platform.daemon_lock()?;
@@ -216,8 +223,21 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
     // Shutdown signal: watch channel shared with tray, IPC, and signal handler
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-    let tray_handle = spawn_tray(hotkey_tx.clone(), shutdown_tx.clone()).await;
-    spawn_ipc(platform.as_ref(), hotkey_tx.clone(), shutdown_tx.clone());
+    // Daemon command channel for recalibrate / reload-config
+    let (daemon_cmd_tx, daemon_cmd_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let tray_handle = spawn_tray(
+        hotkey_tx.clone(),
+        shutdown_tx.clone(),
+        daemon_cmd_tx.clone(),
+    )
+    .await;
+    spawn_ipc(
+        platform.as_ref(),
+        hotkey_tx.clone(),
+        shutdown_tx.clone(),
+        daemon_cmd_tx,
+    );
 
     // Graceful SIGTERM/SIGINT handling
     {
@@ -240,7 +260,8 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
         correction_log,
         tray_handle,
     );
-    app.run_daemon(hotkey_rx, shutdown_rx).await?;
+    app.run_daemon(hotkey_rx, daemon_cmd_rx, shutdown_rx)
+        .await?;
 
     // Shut down the vLLM sidecar if we started one.
     if let Some(ref mut sc) = vllm_sidecar {
@@ -256,6 +277,7 @@ async fn run_daemon(config: config::Config, platform: Box<dyn platform::Platform
 async fn spawn_tray(
     hotkey_tx: tokio::sync::mpsc::UnboundedSender<hotkey::listener::HotkeyEvent>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    daemon_cmd_tx: tokio::sync::mpsc::UnboundedSender<app::DaemonCommand>,
 ) -> Option<ui::tray::TrayHandle> {
     match ui::tray::spawn_tray().await {
         Ok((mut tray_rx, tray_handle)) => {
@@ -266,6 +288,9 @@ async fn spawn_tray(
                     match action {
                         ui::tray::TrayAction::ToggleRecording => {
                             let _ = hotkey_tx.send(hotkey::listener::HotkeyEvent::TogglePressed);
+                        }
+                        ui::tray::TrayAction::Recalibrate => {
+                            let _ = daemon_cmd_tx.send(app::DaemonCommand::Recalibrate);
                         }
                         ui::tray::TrayAction::OpenSettings => {
                             let exe = std::env::current_exe().unwrap_or_default();
@@ -302,6 +327,7 @@ fn spawn_ipc(
     platform: &dyn platform::Platform,
     hotkey_tx: tokio::sync::mpsc::UnboundedSender<hotkey::listener::HotkeyEvent>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    daemon_cmd_tx: tokio::sync::mpsc::UnboundedSender<app::DaemonCommand>,
 ) {
     #[cfg(unix)]
     {
@@ -317,18 +343,25 @@ fn spawn_ipc(
 
         tokio::spawn(async move {
             while let Some(cmd) = ipc_rx.recv().await {
-                let event = match cmd {
-                    ipc::IpcCommand::Toggle => Some(hotkey::listener::HotkeyEvent::TogglePressed),
-                    ipc::IpcCommand::Cancel => Some(hotkey::listener::HotkeyEvent::CancelPressed),
+                match cmd {
+                    ipc::IpcCommand::Toggle => {
+                        let _ = hotkey_tx.send(hotkey::listener::HotkeyEvent::TogglePressed);
+                    }
+                    ipc::IpcCommand::Cancel => {
+                        let _ = hotkey_tx.send(hotkey::listener::HotkeyEvent::CancelPressed);
+                    }
                     ipc::IpcCommand::Stop => {
                         info!("Stop requested via IPC");
                         let _ = shutdown_tx.send(true);
                         return;
                     }
-                    ipc::IpcCommand::Status => None,
-                };
-                if let Some(evt) = event {
-                    let _ = hotkey_tx.send(evt);
+                    ipc::IpcCommand::Status => {}
+                    ipc::IpcCommand::Recalibrate => {
+                        let _ = daemon_cmd_tx.send(app::DaemonCommand::Recalibrate);
+                    }
+                    ipc::IpcCommand::ReloadConfig => {
+                        let _ = daemon_cmd_tx.send(app::DaemonCommand::ReloadConfig);
+                    }
                 }
             }
         });

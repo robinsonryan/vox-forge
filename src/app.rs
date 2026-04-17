@@ -18,6 +18,15 @@ use crate::providers::stt::SttProvider;
 use crate::state::{DictationCommand, DictationEvent, DictationStateMachine};
 use crate::ui::tray::{TrayHandle, TrayState};
 
+/// Commands sent to the daemon from IPC or the tray (not hotkey events).
+#[derive(Debug)]
+pub enum DaemonCommand {
+    /// Re-sample ambient noise and update the silence threshold.
+    Recalibrate,
+    /// Reload config from disk and apply changes.
+    ReloadConfig,
+}
+
 /// Core application that runs the dictation pipeline.
 pub struct App {
     config: Config,
@@ -63,10 +72,11 @@ impl App {
     pub async fn run_daemon(
         &mut self,
         mut hotkey_rx: mpsc::UnboundedReceiver<HotkeyEvent>,
+        mut daemon_cmd_rx: mpsc::UnboundedReceiver<DaemonCommand>,
         shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) -> Result<()> {
         use crate::audio::capture::AudioCapture;
-        use crate::audio::vad::VoiceActivityDetector;
+        use crate::audio::vad::{SharedThreshold, VoiceActivityDetector};
         use crate::config::HotkeyMode;
 
         let device_name = if self.config.audio.input_device.is_empty() {
@@ -91,9 +101,11 @@ impl App {
             self.config.audio.silence_threshold_db as f32
         };
 
+        let shared_threshold = SharedThreshold::new(silence_threshold_db);
+
         #[allow(clippy::cast_possible_truncation)]
-        let vad = VoiceActivityDetector::new(
-            silence_threshold_db,
+        let mut vad = VoiceActivityDetector::new(
+            shared_threshold.clone(),
             self.config.audio.silence_timeout_s as f32,
             audio_capture.sample_rate(),
         );
@@ -149,7 +161,88 @@ impl App {
                 }
                 Ok(None) => break, // Channel closed
                 Err(_) => {
-                    // Timeout -- check VAD if currently recording
+                    // Timeout -- process daemon commands
+                    while let Ok(cmd) = daemon_cmd_rx.try_recv() {
+                        match cmd {
+                            DaemonCommand::Recalibrate => {
+                                if recording.is_some() {
+                                    tracing::warn!("Cannot recalibrate during active recording");
+                                    continue;
+                                }
+                                tracing::info!(
+                                    "Recalibrating silence threshold (2s ambient sample)..."
+                                );
+                                let noise_floor = audio_capture.calibrate_noise_floor(2000);
+                                #[allow(clippy::cast_possible_truncation)]
+                                let margin = self.config.audio.silence_margin_db as f32;
+                                let calibrated = noise_floor + margin;
+                                shared_threshold.set(calibrated);
+                                tracing::info!(
+                                    "Recalibrated: noise floor={noise_floor:.1} dB, \
+                                     margin={margin:.1} dB, threshold={calibrated:.1} dB"
+                                );
+                                crate::notify::notify(
+                                    "VoxForge",
+                                    &format!("Mic recalibrated: threshold {calibrated:.1} dB"),
+                                );
+                            }
+                            DaemonCommand::ReloadConfig => {
+                                match crate::config::Config::load() {
+                                    Ok(new_config) => {
+                                        tracing::info!("Config reloaded from disk");
+                                        // Update threshold
+                                        #[allow(clippy::cast_possible_truncation)]
+                                        if new_config.audio.auto_silence_calibration {
+                                            // Re-calibrate with new margin
+                                            if recording.is_none() {
+                                                let noise_floor =
+                                                    audio_capture.calibrate_noise_floor(2000);
+                                                let margin =
+                                                    new_config.audio.silence_margin_db as f32;
+                                                let calibrated = noise_floor + margin;
+                                                shared_threshold.set(calibrated);
+                                                tracing::info!(
+                                                    "Re-calibrated threshold: \
+                                                     {calibrated:.1} dB"
+                                                );
+                                            }
+                                        } else {
+                                            shared_threshold
+                                                .set(new_config.audio.silence_threshold_db as f32);
+                                            tracing::info!(
+                                                "Manual threshold: {:.1} dB",
+                                                new_config.audio.silence_threshold_db
+                                            );
+                                        }
+                                        // Rebuild VAD if silence timeout changed
+                                        #[allow(clippy::cast_possible_truncation)]
+                                        if (new_config.audio.silence_timeout_s
+                                            - self.config.audio.silence_timeout_s)
+                                            .abs()
+                                            > f64::EPSILON
+                                        {
+                                            vad = VoiceActivityDetector::new(
+                                                shared_threshold.clone(),
+                                                new_config.audio.silence_timeout_s as f32,
+                                                audio_capture.sample_rate(),
+                                            );
+                                            tracing::info!(
+                                                "VAD rebuilt with silence timeout: \
+                                                 {:.1}s",
+                                                new_config.audio.silence_timeout_s
+                                            );
+                                        }
+                                        self.config = new_config;
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to reload config: {e}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Check VAD if currently recording
                     if let Some((handle, start)) = &recording {
                         // Only copy enough samples for the VAD's silence
                         // timeout window plus 1 second of margin.

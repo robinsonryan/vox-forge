@@ -3,11 +3,34 @@
 //! Analyses audio samples in 50 ms windows and determines whether
 //! speech is present based on an energy threshold in dB.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
+
+/// A thread-safe, atomically-updatable f32 value for the silence threshold.
+#[derive(Clone)]
+pub struct SharedThreshold(Arc<AtomicU32>);
+
+impl SharedThreshold {
+    /// Create a new shared threshold with the given dB value.
+    pub fn new(db: f32) -> Self {
+        Self(Arc::new(AtomicU32::new(db.to_bits())))
+    }
+
+    /// Read the current threshold in dB.
+    pub fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+
+    /// Update the threshold to a new dB value.
+    pub fn set(&self, db: f32) {
+        self.0.store(db.to_bits(), Ordering::Relaxed);
+    }
+}
 
 /// Voice Activity Detector using RMS energy.
 pub struct VoiceActivityDetector {
-    threshold_db: f32,
+    threshold_db: SharedThreshold,
     silence_timeout: Duration,
     ignore_initial: Duration,
     window_size_samples: usize,
@@ -31,19 +54,25 @@ pub struct VadResult {
 impl VoiceActivityDetector {
     /// Create a new VAD.
     ///
-    /// * `threshold_db`     -- energy level below which audio is silence (e.g. -40.0)
+    /// * `threshold`         -- shared, atomically-updatable silence threshold in dB
     /// * `silence_timeout_s` -- seconds of continuous silence before auto-stop
     /// * `sample_rate`       -- sample rate of the audio being analysed
-    pub fn new(threshold_db: f32, silence_timeout_s: f32, sample_rate: u32) -> Self {
+    pub fn new(threshold: SharedThreshold, silence_timeout_s: f32, sample_rate: u32) -> Self {
         let window_ms = 50; // 50 ms sliding windows
         let window_size_samples = (sample_rate as usize * window_ms) / 1000;
 
         Self {
-            threshold_db,
+            threshold_db: threshold,
             silence_timeout: Duration::from_secs_f32(silence_timeout_s),
             ignore_initial: Duration::from_secs(1),
             window_size_samples,
         }
+    }
+
+    /// Get a clone of the shared threshold handle.
+    #[allow(dead_code)]
+    pub fn shared_threshold(&self) -> SharedThreshold {
+        self.threshold_db.clone()
     }
 
     /// Analyse audio samples and determine voice activity.
@@ -61,6 +90,7 @@ impl VoiceActivityDetector {
             };
         }
 
+        let threshold = self.threshold_db.get();
         let mut peak_db = f32::NEG_INFINITY;
         let mut current_db = -100.0_f32;
         let mut silence_windows = 0u32;
@@ -78,7 +108,7 @@ impl VoiceActivityDetector {
             current_db = db;
             total_windows += 1;
 
-            if db < self.threshold_db {
+            if db < threshold {
                 silence_windows += 1;
             } else {
                 silence_windows = 0; // Reset on speech
@@ -98,7 +128,7 @@ impl VoiceActivityDetector {
 
         let silence_duration = Duration::from_millis(u64::from(silence_windows) * 50);
 
-        let is_speech = current_db >= self.threshold_db;
+        let is_speech = current_db >= threshold;
 
         let should_stop =
             recording_duration > self.ignore_initial && silence_duration >= self.silence_timeout;
@@ -185,7 +215,7 @@ mod tests {
 
     fn make_vad() -> VoiceActivityDetector {
         // -40 dB threshold, 2s silence timeout, 16 kHz
-        VoiceActivityDetector::new(-40.0, 2.0, 16000)
+        VoiceActivityDetector::new(SharedThreshold::new(-40.0), 2.0, 16000)
     }
 
     #[test]
@@ -315,5 +345,31 @@ mod tests {
         // Too small to form a valid window; treated as no data
         assert!(!result.is_speech);
         assert_eq!(result.current_db, -100.0);
+    }
+
+    #[test]
+    fn shared_threshold_atomic_update() {
+        let t = SharedThreshold::new(-40.0);
+        let t2 = t.clone();
+        assert!((t.get() - (-40.0)).abs() < f32::EPSILON);
+
+        t2.set(-30.0);
+        assert!((t.get() - (-30.0)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn vad_uses_updated_threshold() {
+        let threshold = SharedThreshold::new(-40.0);
+        let vad = VoiceActivityDetector::new(threshold.clone(), 2.0, 16000);
+
+        // Signal at ~-35 dB (amplitude ~0.018): above -40, so speech
+        let samples = vec![0.018_f32; 16000];
+        let result = vad.analyze(&samples, Duration::from_secs(5));
+        assert!(result.is_speech, "Should be speech at -40 dB threshold");
+
+        // Raise threshold to -30 dB: same signal is now silence
+        threshold.set(-30.0);
+        let result = vad.analyze(&samples, Duration::from_secs(5));
+        assert!(!result.is_speech, "Should be silence at -30 dB threshold");
     }
 }

@@ -12,6 +12,8 @@ use tokio::sync::mpsc;
 pub enum TrayAction {
     /// Toggle recording on/off.
     ToggleRecording,
+    /// Recalibrate microphone silence threshold.
+    Recalibrate,
     /// Open the settings window.
     OpenSettings,
     /// Quit the application.
@@ -147,6 +149,15 @@ impl ksni::Tray for VoxForgeTray {
                 icon_name: "media-record".into(),
                 activate: Box::new(|tray: &mut Self| {
                     let _ = tray.tx.send(TrayAction::ToggleRecording);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Recalibrate Mic".into(),
+                icon_name: "audio-input-microphone".into(),
+                activate: Box::new(|tray: &mut Self| {
+                    let _ = tray.tx.send(TrayAction::Recalibrate);
                 }),
                 ..Default::default()
             }

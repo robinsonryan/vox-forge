@@ -1,17 +1,32 @@
 //! Transcription settings tab — provider selection and audio configuration.
 
+use std::sync::{Arc, Mutex};
+
 use egui::Ui;
 
 use crate::config::Config;
+use crate::ipc::IpcResponse;
 use crate::ui::widgets::{api_key_input, status_badge};
+
+/// Status of a background IPC operation (recalibrate, etc.).
+#[derive(Default)]
+enum IpcStatus {
+    #[default]
+    Idle,
+    Pending,
+    Done(IpcResponse),
+    Failed(String),
+}
 
 /// Per-tab state for the transcription settings panel.
 #[derive(Default)]
 pub struct TranscriptionTabState {
     pub openai_key_state: api_key_input::ApiKeyState,
+    recalibrate_status: Arc<Mutex<IpcStatus>>,
 }
 
 /// Draw the transcription settings tab.
+#[allow(clippy::too_many_lines)]
 pub fn draw(ui: &mut Ui, config: &mut Config, state: &mut TranscriptionTabState) {
     ui.heading("Transcription Provider");
     ui.add_space(8.0);
@@ -81,6 +96,74 @@ pub fn draw(ui: &mut Ui, config: &mut Config, state: &mut TranscriptionTabState)
                 ui.add(egui::Slider::new(&mut silence_timeout, 1.0..=10.0));
             });
             config.audio.silence_timeout_s = f64::from(silence_timeout);
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            // Recalibrate button
+            let status = state
+                .recalibrate_status
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let is_pending = matches!(*status, IpcStatus::Pending);
+            drop(status);
+
+            ui.horizontal(|ui| {
+                let button = ui.add_enabled(
+                    !is_pending,
+                    egui::Button::new(if is_pending {
+                        "Recalibrating..."
+                    } else {
+                        "Recalibrate Microphone"
+                    }),
+                );
+
+                if button.clicked() {
+                    let status_ref = Arc::clone(&state.recalibrate_status);
+                    if let Ok(mut s) = status_ref.lock() {
+                        *s = IpcStatus::Pending;
+                    }
+
+                    std::thread::spawn(move || {
+                        let socket = crate::platform::current_platform().ipc_socket_path();
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build();
+                        let result = match rt {
+                            Ok(rt) => rt.block_on(crate::ipc::send_command(
+                                &socket,
+                                crate::ipc::IpcCommand::Recalibrate,
+                            )),
+                            Err(e) => Err(crate::error::Error::Ipc(e.to_string())),
+                        };
+                        if let Ok(mut s) = status_ref.lock() {
+                            match result {
+                                Ok(resp) => *s = IpcStatus::Done(resp),
+                                Err(e) => *s = IpcStatus::Failed(e.to_string()),
+                            }
+                        }
+                    });
+                }
+
+                // Show status feedback
+                let status = state
+                    .recalibrate_status
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                match &*status {
+                    IpcStatus::Idle => {}
+                    IpcStatus::Pending => {
+                        ui.spinner();
+                    }
+                    IpcStatus::Done(resp) => {
+                        ui.colored_label(crate::ui::theme::SUCCESS, &resp.message);
+                    }
+                    IpcStatus::Failed(msg) => {
+                        ui.colored_label(crate::ui::theme::WARNING, msg);
+                    }
+                }
+            });
         });
 }
 

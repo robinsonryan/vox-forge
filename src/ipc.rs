@@ -13,6 +13,8 @@ pub enum IpcCommand {
     Cancel,
     Stop,
     Status,
+    Recalibrate,
+    ReloadConfig,
 }
 
 /// Response from the daemon.
@@ -213,6 +215,22 @@ mod tests {
         let json = serde_json::to_string(&cmd).expect("serialize");
         let parsed: IpcCommand = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, IpcCommand::Status);
+    }
+
+    #[test]
+    fn ipc_command_recalibrate_roundtrip() {
+        let cmd = IpcCommand::Recalibrate;
+        let json = serde_json::to_string(&cmd).expect("serialize");
+        let parsed: IpcCommand = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, IpcCommand::Recalibrate);
+    }
+
+    #[test]
+    fn ipc_command_reload_config_roundtrip() {
+        let cmd = IpcCommand::ReloadConfig;
+        let json = serde_json::to_string(&cmd).expect("serialize");
+        let parsed: IpcCommand = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, IpcCommand::ReloadConfig);
     }
 
     #[test]

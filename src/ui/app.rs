@@ -105,6 +105,19 @@ impl eframe::App for SettingsApp {
                             tracing::error!("Failed to save config: {e}");
                         } else {
                             self.dirty = false;
+                            // Tell the running daemon to reload config
+                            std::thread::spawn(|| {
+                                let socket = crate::platform::current_platform().ipc_socket_path();
+                                let rt = tokio::runtime::Builder::new_current_thread()
+                                    .enable_all()
+                                    .build();
+                                if let Ok(rt) = rt {
+                                    let _ = rt.block_on(crate::ipc::send_command(
+                                        &socket,
+                                        crate::ipc::IpcCommand::ReloadConfig,
+                                    ));
+                                }
+                            });
                         }
                     }
                     if ui.button("Reset Defaults").clicked() {

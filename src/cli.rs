@@ -48,6 +48,12 @@ pub enum Command {
     /// Show daemon status
     Status,
 
+    /// Recalibrate microphone silence threshold on the running daemon
+    Recalibrate,
+
+    /// Tell the running daemon to reload its configuration from disk
+    ReloadConfig,
+
     /// Record, transcribe, format, and print to stdout (one-shot)
     Dictate {
         /// Formatting mode (auto, code, email, chat, prose)
