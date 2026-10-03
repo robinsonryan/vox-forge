@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn resample_empty_input() {
         let output = resample(&[], 48000, 16000);
-        assert!(output.is_empty());
+        assert_eq!(output, Vec::<f32>::new());
     }
 
     #[test]
@@ -482,7 +482,7 @@ mod tests {
         };
         let wav = buf.to_wav_bytes().expect("Empty WAV should still succeed");
         // Just a header, no sample data
-        assert!(!wav.is_empty());
+        assert_ne!(wav, Vec::<u8>::new());
         assert_eq!(&wav[..4], b"RIFF");
     }
 

@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(entries[0].formatted, "Hello, world.");
         assert_eq!(entries[0].app, "code");
         assert!(entries[0].correction.is_none());
-        assert!(!entries[0].ts.is_empty());
+        assert_ne!(entries[0].ts, "");
     }
 
     #[test]
@@ -336,7 +336,7 @@ mod tests {
     fn format_for_prompt_empty_returns_empty() {
         let (_dir, log) = temp_log();
         let prompt = log.format_for_prompt(5).expect("format");
-        assert!(prompt.is_empty());
+        assert_eq!(prompt, "");
     }
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
         log.log_dictation("raw", "Output.", "app").expect("log");
 
         let prompt = log.format_for_prompt(5).expect("format");
-        assert!(prompt.is_empty());
+        assert_eq!(prompt, "");
     }
 
     // ── list_recent ──────────────────────────────────────────────────

@@ -77,7 +77,7 @@ fn render_svg_icon(svg_data: &[u8]) -> ksni::Icon {
     let pixel_count = (ICON_SIZE * ICON_SIZE) as usize;
     let mut argb = Vec::with_capacity(pixel_count * 4);
 
-    for chunk in rgba.chunks_exact(4) {
+    for chunk in rgba.as_chunks::<4>().0 {
         let (r, g, b, a) = (chunk[0], chunk[1], chunk[2], chunk[3]);
         argb.push(a);
         argb.push(r);

@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn list_terms_empty() {
         let config = empty_config();
-        assert!(list_terms(&config).is_empty());
+        assert_eq!(list_terms(&config), Vec::<String>::new());
     }
 
     #[test]

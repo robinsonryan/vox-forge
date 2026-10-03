@@ -297,7 +297,7 @@ mod tests {
     fn display_name_is_not_empty() {
         let platform = LinuxPlatform::new();
         let name = platform.display_name();
-        assert!(!name.is_empty());
+        assert_ne!(name, "");
         assert!(name.starts_with("Linux"));
     }
 
