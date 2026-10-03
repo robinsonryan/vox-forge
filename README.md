@@ -55,6 +55,18 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 An API key for at least one LLM provider (Anthropic or OpenAI) is required for text formatting. Transcription runs entirely locally.
 
+### Parakeet (recommended for CPU-only machines)
+
+Parakeet TDT 0.6B v3 is NVIDIA's speech model, run here as an int8 ONNX export on the CPU — no GPU, Python, or sidecar needed. It handles English plus 24 European languages and detects the language itself.
+
+Download and extract the model (~480 MB download, ~670 MB on disk) into the models folder:
+
+```bash
+mkdir -p ~/.local/share/voxforge/models && curl -L https://blob.handy.computer/parakeet-v3-int8.tar.gz | tar -xz -C ~/.local/share/voxforge/models
+```
+
+This creates `~/.local/share/voxforge/models/parakeet-tdt-0.6b-v3-int8/`. Then select **Parakeet** in the settings window, or set `provider = "parakeet"` in the `[transcription]` section of your config.
+
 ### Local STT via vLLM (optional)
 
 Cohere Transcribe and Voxtral Mini can be used as alternatives to Whisper. Both are served via vLLM, which VoxForge manages as a sidecar process — it starts automatically with the daemon and stops on shutdown.
@@ -220,7 +232,7 @@ voxforge settings
 
 ```toml
 [transcription]
-provider = "whisper_local"  # "whisper_local", "openai_whisper", "cohere_transcribe", or "voxtral"
+provider = "whisper_local"  # "whisper_local", "openai_whisper", "cohere_transcribe", "voxtral", or "parakeet"
 
 [transcription.whisper_local]
 model = "medium"   # tiny, base, small, medium, large-v3

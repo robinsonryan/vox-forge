@@ -13,6 +13,7 @@ use super::llm_anthropic::AnthropicProvider;
 use super::llm_openai::OpenAiProvider;
 use super::stt::SttProvider;
 use super::stt_openai_whisper::OpenAiWhisperProvider;
+use super::stt_parakeet::ParakeetProvider;
 use super::stt_vllm_transcribe::{VllmSttModel, VllmTranscribeProvider};
 use super::stt_whisper_local::WhisperLocalProvider;
 
@@ -64,8 +65,12 @@ pub fn create_stt_provider(config: &Config, models_dir: PathBuf) -> Result<Box<d
             )?;
             Ok(Box::new(provider))
         }
+        "parakeet" => {
+            let provider = ParakeetProvider::new(&models_dir)?;
+            Ok(Box::new(provider))
+        }
         other => Err(Error::Provider(format!(
-            "Unknown STT provider: '{other}' (expected 'whisper_local', 'openai_whisper', 'cohere_transcribe', or 'voxtral')"
+            "Unknown STT provider: '{other}' (expected 'whisper_local', 'openai_whisper', 'cohere_transcribe', 'voxtral', or 'parakeet')"
         ))),
     }
 }
@@ -224,6 +229,33 @@ mod tests {
         let provider = result.expect("provider created");
         assert_eq!(provider.display_name(), "Voxtral");
         assert!(provider.is_local());
+    }
+
+    #[test]
+    fn create_stt_parakeet_without_model_constructs() {
+        let mut config = Config::default();
+        config.transcription.provider = "parakeet".to_string();
+        let models_dir = PathBuf::from("/tmp/voxforge-test-models");
+        let result = create_stt_provider(&config, models_dir);
+        assert!(result.is_ok());
+        let provider = result.expect("provider created");
+        assert_eq!(provider.display_name(), "Parakeet");
+        assert!(provider.is_local());
+        assert!(!provider.requires_api_key());
+    }
+
+    #[test]
+    fn create_stt_unknown_provider_error_lists_parakeet() {
+        let mut config = Config::default();
+        config.transcription.provider = "unknown_provider".to_string();
+        let models_dir = PathBuf::from("/tmp/voxforge-test-models");
+        let err = create_stt_provider(&config, models_dir)
+            .err()
+            .expect("unknown provider should error");
+        assert!(
+            err.to_string().contains("'parakeet'"),
+            "error should list parakeet as a valid provider, got: {err}"
+        );
     }
 
     #[test]

@@ -12,5 +12,6 @@ pub mod stt;
 pub mod llm_anthropic;
 pub mod llm_openai;
 pub mod stt_openai_whisper;
+pub mod stt_parakeet;
 pub mod stt_vllm_transcribe;
 pub mod stt_whisper_local;

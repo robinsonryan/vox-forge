@@ -14,6 +14,7 @@ pub enum SttProviderType {
     OpenaiWhisper,
     CohereTranscribe,
     Voxtral,
+    Parakeet,
 }
 
 /// Compute device for local inference.
@@ -113,6 +114,12 @@ mod tests {
         assert_eq!(json, "\"voxtral\"");
         let back: SttProviderType = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, SttProviderType::Voxtral);
+
+        let parakeet = SttProviderType::Parakeet;
+        let json = serde_json::to_string(&parakeet).expect("serialize");
+        assert_eq!(json, "\"parakeet\"");
+        let back: SttProviderType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, SttProviderType::Parakeet);
     }
 
     #[test]
