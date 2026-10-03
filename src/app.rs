@@ -413,8 +413,9 @@ impl App {
 
     async fn transcribe(&mut self, buffer: &crate::audio::capture::AudioBuffer) -> Option<String> {
         println!(
-            "[transcribing] Sending {}ms of audio to Whisper...",
-            buffer.duration_ms
+            "[transcribing] Sending {}ms of audio to {}...",
+            buffer.duration_ms,
+            self.stt.display_name()
         );
         match self
             .stt
@@ -528,6 +529,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::type_complexity)]
     fn app_constructs_with_defaults() {
         // Verify App::new compiles and the state machine starts idle.
         // We use a minimal FallbackDetector and dummy providers.

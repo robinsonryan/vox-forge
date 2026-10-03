@@ -92,7 +92,7 @@ impl VllmSidecar {
         let mut sidecar = Self { child, endpoint };
 
         // Wait for the health endpoint to respond.
-        sidecar.wait_for_healthy(Duration::from_secs(180)).await?;
+        sidecar.wait_for_healthy(Duration::from_mins(3)).await?;
 
         Ok(sidecar)
     }

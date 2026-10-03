@@ -1,11 +1,13 @@
 //! Transcription settings tab — provider selection and audio configuration.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use egui::Ui;
 
 use crate::config::Config;
 use crate::ipc::IpcResponse;
+use crate::providers::stt_parakeet::{PARAKEET_MODEL_DIR_NAME, PARAKEET_REQUIRED_FILES};
 use crate::ui::widgets::{api_key_input, status_badge};
 
 /// Status of a background IPC operation (recalibrate, etc.).
@@ -23,6 +25,8 @@ enum IpcStatus {
 pub struct TranscriptionTabState {
     pub openai_key_state: api_key_input::ApiKeyState,
     recalibrate_status: Arc<Mutex<IpcStatus>>,
+    /// Resolved once on first draw of the Parakeet panel.
+    parakeet_model_dir: Option<PathBuf>,
 }
 
 /// Draw the transcription settings tab.
@@ -58,6 +62,9 @@ pub fn draw(ui: &mut Ui, config: &mut Config, state: &mut TranscriptionTabState)
         if ui.radio(provider == "voxtral", "Voxtral").clicked() {
             config.transcription.provider = "voxtral".to_string();
         }
+        if ui.radio(provider == "parakeet", "Parakeet").clicked() {
+            config.transcription.provider = "parakeet".to_string();
+        }
     });
 
     ui.separator();
@@ -66,6 +73,7 @@ pub fn draw(ui: &mut Ui, config: &mut Config, state: &mut TranscriptionTabState)
         "openai_whisper" => draw_openai_whisper(ui, config, state),
         "cohere_transcribe" => draw_cohere_transcribe(ui, config),
         "voxtral" => draw_voxtral(ui, config),
+        "parakeet" => draw_parakeet(ui, state),
         _ => draw_local_whisper(ui, config),
     }
 
@@ -287,4 +295,96 @@ fn draw_voxtral(ui: &mut Ui, config: &mut Config) {
             "Requires vLLM sidecar: vllm serve mistralai/Voxtral-Mini-3B-2507 --tokenizer_mode mistral --config_format mistral --load_format mistral",
         );
     });
+}
+
+fn draw_parakeet(ui: &mut Ui, state: &mut TranscriptionTabState) {
+    let model_dir = state.parakeet_model_dir.get_or_insert_with(|| {
+        crate::platform::current_platform()
+            .models_dir()
+            .join(PARAKEET_MODEL_DIR_NAME)
+    });
+
+    ui.group(|ui| {
+        ui.label("Parakeet Settings");
+        ui.add_space(4.0);
+
+        ui.label("Model: Parakeet TDT 0.6B v3 (int8)");
+        ui.label("~670 MB | English + 24 European languages | runs on CPU, no GPU needed");
+        ui.add_space(4.0);
+
+        if parakeet_model_files_present(model_dir) {
+            status_badge::status_badge(ui, status_badge::StatusLevel::Ready, "Model downloaded");
+        } else {
+            status_badge::status_badge(
+                ui,
+                status_badge::StatusLevel::Warning,
+                "Model not downloaded",
+            );
+        }
+        ui.label(format!("Model folder: {}", model_dir.display()));
+
+        ui.add_space(4.0);
+        let extract_to = model_dir.parent().unwrap_or(model_dir);
+        ui.colored_label(crate::ui::theme::MUTED, parakeet_download_hint(extract_to));
+    });
+}
+
+/// Whether every file the Parakeet loader reads is present in `model_dir`.
+/// A bare directory (e.g. from an interrupted extract) does not count.
+fn parakeet_model_files_present(model_dir: &Path) -> bool {
+    PARAKEET_REQUIRED_FILES
+        .iter()
+        .all(|name| model_dir.join(name).is_file())
+}
+
+/// Shell command that downloads and extracts the Parakeet model into
+/// `extract_to`, with the path single-quoted so spaces and shell
+/// metacharacters in it are taken literally.
+fn parakeet_download_hint(extract_to: &Path) -> String {
+    let dir = format!(
+        "'{}'",
+        extract_to.display().to_string().replace('\'', r"'\''")
+    );
+    format!(
+        "Download (Linux/macOS): mkdir -p {dir} && curl -L https://blob.handy.computer/parakeet-v3-int8.tar.gz | tar -xz -C {dir}"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_files_present_requires_every_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(!parakeet_model_files_present(dir.path()), "empty dir");
+
+        let (last, rest) = PARAKEET_REQUIRED_FILES
+            .split_last()
+            .expect("non-empty file list");
+        for name in rest {
+            std::fs::write(dir.path().join(name), b"x").expect("write");
+        }
+        assert!(
+            !parakeet_model_files_present(dir.path()),
+            "one file missing"
+        );
+
+        std::fs::write(dir.path().join(last), b"x").expect("write");
+        assert!(parakeet_model_files_present(dir.path()));
+    }
+
+    #[test]
+    fn download_hint_quotes_path() {
+        let hint = parakeet_download_hint(Path::new("/home/a b/it's models"));
+        assert!(hint.starts_with("Download (Linux/macOS): "));
+        assert!(
+            hint.contains(r"mkdir -p '/home/a b/it'\''s models' &&"),
+            "got: {hint}"
+        );
+        assert!(
+            hint.ends_with(r"tar -xz -C '/home/a b/it'\''s models'"),
+            "got: {hint}"
+        );
+    }
 }

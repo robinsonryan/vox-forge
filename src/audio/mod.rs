@@ -11,6 +11,7 @@ pub fn amplitude_to_db(amplitude: f32) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)] // exact sentinel/default values are intended
 mod tests {
     use super::*;
 

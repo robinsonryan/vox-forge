@@ -159,6 +159,7 @@ fn rms_to_db(rms: f32) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)] // exact sentinel/default values are intended
 mod tests {
     use super::*;
 

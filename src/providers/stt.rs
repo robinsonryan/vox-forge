@@ -14,6 +14,7 @@ pub enum SttProviderType {
     OpenaiWhisper,
     CohereTranscribe,
     Voxtral,
+    Parakeet,
 }
 
 /// Compute device for local inference.
@@ -61,6 +62,16 @@ pub struct ProviderHealth {
     pub ready: bool,
     /// Human-readable status message.
     pub message: String,
+}
+
+/// Duration in milliseconds of `sample_count` mono samples at `sample_rate` Hz.
+///
+/// Integer arithmetic (rounds down) avoids float-cast lints. A zero sample
+/// rate yields 0 rather than dividing by zero.
+pub fn samples_to_ms(sample_count: usize, sample_rate: u32) -> u64 {
+    (sample_count as u64 * 1000)
+        .checked_div(u64::from(sample_rate))
+        .unwrap_or(0)
 }
 
 /// Trait that every speech-to-text backend must implement.
@@ -113,6 +124,22 @@ mod tests {
         assert_eq!(json, "\"voxtral\"");
         let back: SttProviderType = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, SttProviderType::Voxtral);
+
+        let parakeet = SttProviderType::Parakeet;
+        let json = serde_json::to_string(&parakeet).expect("serialize");
+        assert_eq!(json, "\"parakeet\"");
+        let back: SttProviderType = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, SttProviderType::Parakeet);
+    }
+
+    #[test]
+    fn samples_to_ms_converts_and_rounds_down() {
+        assert_eq!(samples_to_ms(16_000, 16_000), 1000);
+        assert_eq!(samples_to_ms(8_000, 16_000), 500);
+        assert_eq!(samples_to_ms(15, 16_000), 0);
+        assert_eq!(samples_to_ms(44_100 * 3, 44_100), 3000);
+        assert_eq!(samples_to_ms(0, 16_000), 0);
+        assert_eq!(samples_to_ms(16_000, 0), 0);
     }
 
     #[test]

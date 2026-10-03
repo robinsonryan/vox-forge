@@ -8,7 +8,7 @@ use serde::Deserialize;
 use crate::audio::capture::AudioBuffer;
 use crate::error::{Error, Result};
 
-use super::stt::{ModelInfo, ProviderHealth, SttProvider, TranscriptionResult};
+use super::stt::{ModelInfo, ProviderHealth, SttProvider, TranscriptionResult, samples_to_ms};
 
 /// JSON response from the `OpenAI` Whisper transcription endpoint.
 #[derive(Deserialize)]
@@ -55,7 +55,7 @@ impl SttProvider for OpenAiWhisperProvider {
         let audio_buffer = AudioBuffer {
             samples: audio.to_vec(),
             sample_rate,
-            duration_ms: (audio.len() as u64 * 1000) / u64::from(sample_rate),
+            duration_ms: samples_to_ms(audio.len(), sample_rate),
         };
         let wav_bytes = audio_buffer.to_wav_bytes()?;
 
@@ -101,7 +101,7 @@ impl SttProvider for OpenAiWhisperProvider {
 
         #[allow(clippy::cast_possible_truncation)]
         let duration_ms = start.elapsed().as_millis() as u64;
-        let audio_duration_ms = (audio.len() as u64) * 1000 / u64::from(sample_rate);
+        let audio_duration_ms = samples_to_ms(audio.len(), sample_rate);
 
         Ok(TranscriptionResult {
             text: whisper_response.text,

@@ -236,7 +236,7 @@ pub enum ProviderAction {
 
     /// Set the active STT (speech-to-text) provider
     SetStt {
-        /// Provider name (`whisper_local`, `openai_whisper`)
+        /// Provider name (`whisper_local`, `openai_whisper`, `cohere_transcribe`, `voxtral`, `parakeet`)
         provider: String,
     },
 
