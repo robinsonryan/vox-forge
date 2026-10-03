@@ -56,7 +56,7 @@ impl AudioCapture {
         let device = if let Some(name) = device_name {
             host.input_devices()
                 .map_err(|e| Error::Audio(format!("Failed to enumerate devices: {e}")))?
-                .find(|d| d.name().map(|n| n == name).unwrap_or(false))
+                .find(|d| d.name().is_ok_and(|n| n == name))
                 .ok_or_else(|| Error::Audio(format!("Audio device '{name}' not found")))?
         } else {
             host.default_input_device()
@@ -290,10 +290,7 @@ impl RecordingHandle {
 
     /// The number of samples recorded so far.
     pub fn sample_count(&self) -> usize {
-        self.state
-            .lock()
-            .map(|s| s.recording_buf.len())
-            .unwrap_or(0)
+        self.state.lock().map_or(0, |s| s.recording_buf.len())
     }
 }
 
@@ -397,7 +394,7 @@ mod tests {
     #[test]
     fn resample_downsample_48k_to_16k() {
         // 48 samples at 48 kHz = 1 ms -> should produce ~16 samples at 16 kHz
-        let input: Vec<f32> = (0..48).map(|i| i as f32 / 48.0).collect();
+        let input: Vec<f32> = (0..48_u16).map(|i| f32::from(i) / 48.0).collect();
         let output = resample(&input, 48000, 16000);
         assert_eq!(output.len(), 16);
         // First sample should be 0.0
@@ -410,7 +407,7 @@ mod tests {
 
     #[test]
     fn resample_upsample_16k_to_48k() {
-        let input: Vec<f32> = (0..16).map(|i| i as f32 / 16.0).collect();
+        let input: Vec<f32> = (0..16_u16).map(|i| f32::from(i) / 16.0).collect();
         let output = resample(&input, 16000, 48000);
         assert_eq!(output.len(), 48);
         // First sample preserved
@@ -470,6 +467,7 @@ mod tests {
         assert_eq!(decoded.len(), samples.len());
         // Check that values round-trip reasonably (within 16-bit quantization)
         for (orig, &decoded_s) in samples.iter().zip(&decoded) {
+            #[allow(clippy::cast_possible_truncation)]
             let expected = (orig * 32_767.0).clamp(-32_768.0, 32_767.0) as i16;
             assert_eq!(decoded_s, expected);
         }

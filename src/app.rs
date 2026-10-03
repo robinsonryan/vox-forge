@@ -528,6 +528,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::type_complexity)]
     fn app_constructs_with_defaults() {
         // Verify App::new compiles and the state machine starts idle.
         // We use a minimal FallbackDetector and dummy providers.

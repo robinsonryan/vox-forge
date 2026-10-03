@@ -305,8 +305,7 @@ mod tests {
     async fn transcribe_without_model_returns_not_loaded_error() {
         let provider = test_provider();
         let result = provider.transcribe(&[0.0_f32; 100], 16000).await;
-        assert!(result.is_err());
-        let err = result.err().expect("should be Err");
+        let err = result.expect_err("should be Err");
         assert!(
             err.to_string().contains("Model not loaded"),
             "expected 'Model not loaded' error, got: {err}"

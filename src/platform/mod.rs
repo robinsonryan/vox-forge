@@ -95,9 +95,7 @@ pub trait Platform: Send + Sync {
 /// The result is stable for the lifetime of the process.
 pub fn is_wayland() -> bool {
     std::env::var("WAYLAND_DISPLAY").is_ok()
-        || std::env::var("XDG_SESSION_TYPE")
-            .map(|v| v == "wayland")
-            .unwrap_or(false)
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v == "wayland")
 }
 
 /// Return the [`Platform`] implementation for the OS this binary was compiled for.

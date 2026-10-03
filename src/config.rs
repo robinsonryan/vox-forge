@@ -729,6 +729,7 @@ impl Config {
 // ─── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)] // exact sentinel/default values are intended
 mod tests {
     use super::*;
 

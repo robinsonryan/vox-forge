@@ -134,14 +134,12 @@ impl Platform for LinuxPlatform {
         // Check /dev/uinput access (needed for synthetic keyboard input).
         let uinput = PathBuf::from("/dev/uinput");
         if uinput.exists() {
-            let writable = fs::metadata(&uinput)
-                .map(|m| {
-                    use std::os::unix::fs::MetadataExt;
-                    // Writable by owner or group -- a rough heuristic.
-                    // Actual permission depends on udev rules.
-                    m.mode() & 0o222 != 0
-                })
-                .unwrap_or(false);
+            let writable = fs::metadata(&uinput).is_ok_and(|m| {
+                use std::os::unix::fs::MetadataExt;
+                // Writable by owner or group -- a rough heuristic.
+                // Actual permission depends on udev rules.
+                m.mode() & 0o222 != 0
+            });
 
             if !writable {
                 issues.push(PermissionIssue {
