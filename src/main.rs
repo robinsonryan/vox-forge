@@ -735,6 +735,9 @@ mod tests {
     #[test]
     fn list_models_empty_dir_is_empty() {
         let dir = tempfile::tempdir().expect("tempdir");
-        assert!(list_models(dir.path()).expect("list models").is_empty());
+        assert_eq!(
+            list_models(dir.path()).expect("list models"),
+            Vec::<String>::new()
+        );
     }
 }

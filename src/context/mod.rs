@@ -63,8 +63,8 @@ mod tests {
     fn unknown_context_has_expected_defaults() {
         let ctx = AppContext::unknown();
         assert_eq!(ctx.app_name, "unknown");
-        assert!(ctx.window_title.is_empty());
-        assert!(ctx.executable.is_empty());
+        assert_eq!(ctx.window_title, "");
+        assert_eq!(ctx.executable, "");
     }
 
     #[test]
@@ -74,15 +74,15 @@ mod tests {
         assert!(result.is_ok());
         let ctx = result.expect("fallback should never fail");
         assert_eq!(ctx.app_name, "unknown");
-        assert!(ctx.window_title.is_empty());
-        assert!(ctx.executable.is_empty());
+        assert_eq!(ctx.window_title, "");
+        assert_eq!(ctx.executable, "");
     }
 
     #[test]
     fn default_app_context_is_empty() {
         let ctx = AppContext::default();
-        assert!(ctx.app_name.is_empty());
-        assert!(ctx.window_title.is_empty());
-        assert!(ctx.executable.is_empty());
+        assert_eq!(ctx.app_name, "");
+        assert_eq!(ctx.window_title, "");
+        assert_eq!(ctx.executable, "");
     }
 }

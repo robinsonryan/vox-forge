@@ -878,9 +878,9 @@ log_level = "debug"
     #[test]
     fn auto_rules_defaults_populated() {
         let config = Config::default();
-        assert!(!config.formatting.auto_rules.code.is_empty());
-        assert!(!config.formatting.auto_rules.email.is_empty());
-        assert!(!config.formatting.auto_rules.chat.is_empty());
+        assert_ne!(config.formatting.auto_rules.code, Vec::<String>::new());
+        assert_ne!(config.formatting.auto_rules.email, Vec::<String>::new());
+        assert_ne!(config.formatting.auto_rules.chat, Vec::<String>::new());
         assert!(
             config
                 .formatting
@@ -907,7 +907,7 @@ log_level = "debug"
     #[test]
     fn clipboard_apps_defaults_populated() {
         let config = Config::default();
-        assert!(!config.output.clipboard_apps.is_empty());
+        assert_ne!(config.output.clipboard_apps, Vec::<String>::new());
         assert!(config.output.clipboard_apps.contains(&"kitty".to_string()));
     }
 
