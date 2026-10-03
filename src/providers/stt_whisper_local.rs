@@ -12,7 +12,9 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 
 use crate::error::{Error, Result};
 
-use super::stt::{ComputeDevice, ModelInfo, ProviderHealth, SttProvider, TranscriptionResult};
+use super::stt::{
+    ComputeDevice, ModelInfo, ProviderHealth, SttProvider, TranscriptionResult, samples_to_ms,
+};
 
 /// Expected sample rate for whisper models (16 kHz).
 const WHISPER_SAMPLE_RATE: u32 = 16_000;
@@ -116,7 +118,7 @@ impl SttProvider for WhisperLocalProvider {
 
         // Compute audio duration before inference (samples / rate * 1000)
         // Integer arithmetic avoids floating-point lint issues.
-        let audio_duration_ms = (audio.len() as u64) * 1000 / u64::from(WHISPER_SAMPLE_RATE);
+        let audio_duration_ms = samples_to_ms(audio.len(), WHISPER_SAMPLE_RATE);
 
         // Build inference parameters
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });

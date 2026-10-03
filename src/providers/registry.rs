@@ -66,7 +66,7 @@ pub fn create_stt_provider(config: &Config, models_dir: PathBuf) -> Result<Box<d
             Ok(Box::new(provider))
         }
         "parakeet" => {
-            let provider = ParakeetProvider::new(&models_dir)?;
+            let provider = ParakeetProvider::new(&models_dir);
             Ok(Box::new(provider))
         }
         other => Err(Error::Provider(format!(
@@ -235,13 +235,39 @@ mod tests {
     fn create_stt_parakeet_without_model_constructs() {
         let mut config = Config::default();
         config.transcription.provider = "parakeet".to_string();
-        let models_dir = PathBuf::from("/tmp/voxforge-test-models");
-        let result = create_stt_provider(&config, models_dir);
+        let models_dir = tempfile::tempdir().expect("tempdir");
+        let result = create_stt_provider(&config, models_dir.path().to_path_buf());
         assert!(result.is_ok());
         let provider = result.expect("provider created");
         assert_eq!(provider.display_name(), "Parakeet");
         assert!(provider.is_local());
         assert!(!provider.requires_api_key());
+    }
+
+    /// A model folder that exists but cannot be loaded (e.g. a truncated
+    /// download) must not stop the daemon from starting.
+    #[tokio::test]
+    async fn create_stt_parakeet_with_unloadable_model_constructs_not_ready() {
+        let mut config = Config::default();
+        config.transcription.provider = "parakeet".to_string();
+        let models_dir = tempfile::tempdir().expect("tempdir");
+        let parakeet_dir = models_dir
+            .path()
+            .join(crate::providers::stt_parakeet::PARAKEET_MODEL_DIR_NAME);
+        std::fs::create_dir(&parakeet_dir).expect("create model dir");
+        for name in crate::providers::stt_parakeet::PARAKEET_REQUIRED_FILES {
+            std::fs::write(parakeet_dir.join(name), b"not an onnx model").expect("write file");
+        }
+
+        let provider = create_stt_provider(&config, models_dir.path().to_path_buf())
+            .expect("unloadable model must not fail construction");
+        let health = provider.health_check().await.expect("health_check");
+        assert!(!health.ready);
+        assert!(
+            health.message.contains("failed to load"),
+            "health should report the load failure, got: {}",
+            health.message
+        );
     }
 
     #[test]

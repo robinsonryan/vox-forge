@@ -65,7 +65,7 @@ Download and extract the model (~480 MB download, ~670 MB on disk) into the mode
 mkdir -p ~/.local/share/voxforge/models && curl -L https://blob.handy.computer/parakeet-v3-int8.tar.gz | tar -xz -C ~/.local/share/voxforge/models
 ```
 
-This creates `~/.local/share/voxforge/models/parakeet-tdt-0.6b-v3-int8/`. Then select **Parakeet** in the settings window, or set `provider = "parakeet"` in the `[transcription]` section of your config.
+This creates `~/.local/share/voxforge/models/parakeet-tdt-0.6b-v3-int8/`. Then select **Parakeet** in the settings window, or set `provider = "parakeet"` in the `[transcription]` section of your config, and restart the daemon — a running daemon keeps its current speech-to-text engine until it restarts.
 
 ### Local STT via vLLM (optional)
 

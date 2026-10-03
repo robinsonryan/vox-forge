@@ -503,26 +503,16 @@ fn handle_model_action(action: ModelAction, platform: &dyn platform::Platform) -
         }
         ModelAction::List => {
             let dir = platform.models_dir();
-            if dir.exists() {
-                let mut found = false;
-                for entry in std::fs::read_dir(&dir)? {
-                    let entry = entry?;
-                    if let Some(name) = entry.file_name().to_str()
-                        && std::path::Path::new(name)
-                            .extension()
-                            .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
-                    {
-                        let meta = entry.metadata()?;
-                        let size_mb = meta.len() / (1024 * 1024);
-                        println!("  {name} ({size_mb}MB)");
-                        found = true;
-                    }
-                }
-                if !found {
-                    println!("No models downloaded yet. Directory: {}", dir.display());
-                }
+            let models = if dir.exists() {
+                list_models(&dir)?
             } else {
+                Vec::new()
+            };
+            if models.is_empty() {
                 println!("No models downloaded yet. Directory: {}", dir.display());
+            }
+            for line in models {
+                println!("  {line}");
             }
         }
         ModelAction::Info { model } => {
@@ -530,6 +520,37 @@ fn handle_model_action(action: ModelAction, platform: &dyn platform::Platform) -
         }
     }
     Ok(())
+}
+
+/// Describe each model in `dir`, sorted by name: single-file models
+/// (`*.bin`, e.g. Whisper) and model directories (e.g. Parakeet), each with
+/// its size in MB. A directory's size is the sum of the files directly in it.
+fn list_models(dir: &std::path::Path) -> std::io::Result<Vec<String>> {
+    let mut models = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let meta = entry.metadata()?;
+        if meta.is_dir() {
+            let mut bytes = 0;
+            for file in std::fs::read_dir(entry.path())? {
+                let file_meta = file?.metadata()?;
+                if file_meta.is_file() {
+                    bytes += file_meta.len();
+                }
+            }
+            models.push(format!("{name}/ ({}MB)", bytes / (1024 * 1024)));
+        } else if std::path::Path::new(&name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
+        {
+            models.push(format!("{name} ({}MB)", meta.len() / (1024 * 1024)));
+        }
+    }
+    models.sort();
+    Ok(models)
 }
 
 // ─── Devices ────────────────────────────────────────────────────────
@@ -681,4 +702,39 @@ fn handle_auth_action(action: AuthAction, config: &mut config::Config) -> Result
         },
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_models_includes_bin_files_and_model_directories() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("ggml-base.en.bin"),
+            vec![0_u8; 2 * 1024 * 1024],
+        )
+        .expect("write bin");
+        std::fs::write(dir.path().join("notes.txt"), b"ignored").expect("write txt");
+        let model_dir = dir.path().join("parakeet-tdt-0.6b-v3-int8");
+        std::fs::create_dir(&model_dir).expect("create model dir");
+        std::fs::write(model_dir.join("encoder.onnx"), vec![0_u8; 3 * 1024 * 1024])
+            .expect("write onnx");
+
+        let models = list_models(dir.path()).expect("list models");
+        assert_eq!(
+            models,
+            vec![
+                "ggml-base.en.bin (2MB)".to_string(),
+                "parakeet-tdt-0.6b-v3-int8/ (3MB)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn list_models_empty_dir_is_empty() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(list_models(dir.path()).expect("list models").is_empty());
+    }
 }

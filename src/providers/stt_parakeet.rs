@@ -15,11 +15,20 @@ use transcribe_rs::onnx::parakeet::{ParakeetModel, ParakeetParams};
 
 use crate::error::{Error, Result};
 
-use super::stt::{ModelInfo, ProviderHealth, SttProvider, TranscriptionResult};
+use super::stt::{ModelInfo, ProviderHealth, SttProvider, TranscriptionResult, samples_to_ms};
 
 /// Directory name of the model under the models dir. Matches the directory
 /// the published `parakeet-v3-int8.tar.gz` tarball extracts to.
 pub const PARAKEET_MODEL_DIR_NAME: &str = "parakeet-tdt-0.6b-v3-int8";
+
+/// Files transcribe-rs reads from the model directory when loading the int8
+/// model. A directory missing any of them is an incomplete download.
+pub const PARAKEET_REQUIRED_FILES: [&str; 4] = [
+    "encoder-model.int8.onnx",
+    "decoder_joint-model.int8.onnx",
+    "nemo128.onnx",
+    "vocab.txt",
+];
 
 /// Expected sample rate for Parakeet (16 kHz mono).
 const PARAKEET_SAMPLE_RATE: u32 = 16_000;
@@ -30,47 +39,58 @@ pub struct ParakeetProvider {
     /// `ParakeetModel::transcribe_with` takes `&mut self`, so the model sits
     /// behind a mutex and inference runs on the blocking thread pool.
     model: Option<Arc<Mutex<ParakeetModel>>>,
+    /// Why the model directory was present but could not be loaded (e.g. a
+    /// truncated download). `None` when the model loaded or was never there.
+    load_error: Option<String>,
 }
 
 impl ParakeetProvider {
     /// Create a new Parakeet provider.
     ///
     /// If the model directory exists at `models_dir/parakeet-tdt-0.6b-v3-int8`,
-    /// the model is loaded eagerly. If it is absent the provider is still
-    /// constructed (with `model = None`) so that `health_check` can report
-    /// "not ready" rather than failing outright.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the model directory exists but transcribe-rs fails
-    /// to load it (e.g. missing or corrupted ONNX files).
-    pub fn new(models_dir: &Path) -> Result<Self> {
+    /// the model is loaded eagerly. If it is absent, or present but fails to
+    /// load (e.g. a truncated download), the provider is still constructed
+    /// without a model so the daemon starts and `health_check` reports why it
+    /// is not ready.
+    pub fn new(models_dir: &Path) -> Self {
         let model_path = models_dir.join(PARAKEET_MODEL_DIR_NAME);
 
-        let model = if model_path.is_dir() {
-            let loaded = ParakeetModel::load(&model_path, &Quantization::Int8)
-                .map_err(|e| Error::Transcription(format!("Failed to load Parakeet model: {e}")))?;
-            tracing::info!("Parakeet model loaded from {}", model_path.display());
-            Some(Arc::new(Mutex::new(loaded)))
-        } else {
+        if !model_path.is_dir() {
             tracing::warn!(
                 "Parakeet model directory not found at {}; provider created without model",
                 model_path.display()
             );
-            None
-        };
+            return Self {
+                model_path,
+                model: None,
+                load_error: None,
+            };
+        }
 
-        Ok(Self { model_path, model })
-    }
-
-    /// Full filesystem path to the expected model directory.
-    #[allow(dead_code)]
-    pub fn model_path(&self) -> &Path {
-        &self.model_path
+        match ParakeetModel::load(&model_path, &Quantization::Int8) {
+            Ok(loaded) => {
+                tracing::info!("Parakeet model loaded from {}", model_path.display());
+                Self {
+                    model_path,
+                    model: Some(Arc::new(Mutex::new(loaded))),
+                    load_error: None,
+                }
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Parakeet model at {} failed to load: {e}; provider created without model",
+                    model_path.display()
+                );
+                Self {
+                    model_path,
+                    model: None,
+                    load_error: Some(e.to_string()),
+                }
+            }
+        }
     }
 
     /// Whether the model has been downloaded and loaded.
-    #[allow(dead_code)]
     pub fn model_loaded(&self) -> bool {
         self.model.is_some()
     }
@@ -91,14 +111,13 @@ impl SttProvider for ParakeetProvider {
             return Err(Error::Transcription("Audio buffer is empty".to_string()));
         }
 
-        let model = Arc::clone(
-            self.model
-                .as_ref()
-                .ok_or_else(|| Error::Transcription("Model not loaded".to_string()))?,
-        );
+        let model = Arc::clone(self.model.as_ref().ok_or_else(|| match &self.load_error {
+            Some(cause) => Error::Transcription(format!("Model not loaded: {cause}")),
+            None => Error::Transcription("Model not loaded".to_string()),
+        })?);
 
         // Integer arithmetic avoids floating-point lint issues.
-        let audio_duration_ms = (audio.len() as u64) * 1000 / u64::from(PARAKEET_SAMPLE_RATE);
+        let audio_duration_ms = samples_to_ms(audio.len(), PARAKEET_SAMPLE_RATE);
 
         // The closure must own its input to run on the blocking pool.
         let samples = audio.to_vec();
@@ -144,6 +163,15 @@ impl SttProvider for ParakeetProvider {
                 ready: true,
                 message: format!("Model '{PARAKEET_MODEL_DIR_NAME}' loaded (CPU)"),
             })
+        } else if let Some(cause) = &self.load_error {
+            Ok(ProviderHealth {
+                ready: false,
+                message: format!(
+                    "Model '{PARAKEET_MODEL_DIR_NAME}' failed to load from {} ({cause}); \
+                     delete that folder and re-download the model",
+                    self.model_path.display()
+                ),
+            })
         } else {
             Ok(ProviderHealth {
                 ready: false,
@@ -170,34 +198,51 @@ impl SttProvider for ParakeetProvider {
 mod tests {
     use super::*;
 
-    fn test_provider() -> ParakeetProvider {
-        ParakeetProvider::new(Path::new("/tmp/voxforge-test-models")).expect("create provider")
+    /// Provider built over an empty temp models dir (no model present). The
+    /// `TempDir` is returned so the directory outlives the provider.
+    fn test_provider() -> (tempfile::TempDir, ParakeetProvider) {
+        let models_dir = tempfile::tempdir().expect("tempdir");
+        let provider = ParakeetProvider::new(models_dir.path());
+        (models_dir, provider)
+    }
+
+    /// Provider built over a model dir whose required files exist but hold
+    /// garbage, as left behind by an interrupted download.
+    fn unloadable_provider() -> (tempfile::TempDir, ParakeetProvider) {
+        let models_dir = tempfile::tempdir().expect("tempdir");
+        let parakeet_dir = models_dir.path().join(PARAKEET_MODEL_DIR_NAME);
+        std::fs::create_dir(&parakeet_dir).expect("create model dir");
+        for name in PARAKEET_REQUIRED_FILES {
+            std::fs::write(parakeet_dir.join(name), b"").expect("write empty file");
+        }
+        let provider = ParakeetProvider::new(models_dir.path());
+        (models_dir, provider)
     }
 
     #[test]
     fn display_name_is_parakeet() {
-        assert_eq!(test_provider().display_name(), "Parakeet");
+        assert_eq!(test_provider().1.display_name(), "Parakeet");
     }
 
     #[test]
     fn is_local_and_needs_no_api_key() {
-        let provider = test_provider();
+        let (_dir, provider) = test_provider();
         assert!(provider.is_local());
         assert!(!provider.requires_api_key());
     }
 
     #[test]
     fn model_path_is_model_dir_under_models_dir() {
-        let provider = test_provider();
+        let (dir, provider) = test_provider();
         assert_eq!(
-            provider.model_path(),
-            Path::new("/tmp/voxforge-test-models/parakeet-tdt-0.6b-v3-int8")
+            provider.model_path,
+            dir.path().join("parakeet-tdt-0.6b-v3-int8")
         );
     }
 
     #[test]
     fn available_models_has_single_local_entry() {
-        let models = test_provider().available_models();
+        let models = test_provider().1.available_models();
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "parakeet-tdt-0.6b-v3-int8");
         assert!(models[0].is_local);
@@ -205,26 +250,71 @@ mod tests {
 
     #[test]
     fn model_loaded_false_for_nonexistent_path() {
-        assert!(!test_provider().model_loaded());
+        assert!(!test_provider().1.model_loaded());
     }
 
     #[tokio::test]
     async fn health_check_not_ready_names_expected_path() {
-        let health = test_provider().health_check().await.expect("health_check");
+        let (dir, provider) = test_provider();
+        let health = provider.health_check().await.expect("health_check");
+        let expected = dir.path().join("parakeet-tdt-0.6b-v3-int8");
         assert!(!health.ready);
         assert!(health.message.contains("not downloaded"));
         assert!(
-            health
-                .message
-                .contains("/tmp/voxforge-test-models/parakeet-tdt-0.6b-v3-int8"),
+            health.message.contains(&expected.display().to_string()),
             "health message should name the expected path, got: {}",
             health.message
+        );
+    }
+
+    #[test]
+    fn unloadable_model_dir_constructs_without_model() {
+        let (_dir, provider) = unloadable_provider();
+        assert!(!provider.model_loaded());
+        assert!(provider.load_error.is_some());
+    }
+
+    #[tokio::test]
+    async fn health_check_reports_load_failure_with_path() {
+        let (dir, provider) = unloadable_provider();
+        let health = provider.health_check().await.expect("health_check");
+        let expected = dir.path().join("parakeet-tdt-0.6b-v3-int8");
+        assert!(!health.ready);
+        assert!(
+            health.message.contains("failed to load"),
+            "health should report the load failure, got: {}",
+            health.message
+        );
+        assert!(
+            health.message.contains("re-download"),
+            "health should tell the user to re-download, got: {}",
+            health.message
+        );
+        assert!(
+            health.message.contains(&expected.display().to_string()),
+            "health should name the model path, got: {}",
+            health.message
+        );
+    }
+
+    #[tokio::test]
+    async fn transcribe_with_unloadable_model_returns_not_loaded_with_cause() {
+        let (_dir, provider) = unloadable_provider();
+        let err = provider
+            .transcribe(&[0.0_f32; 100], 16_000)
+            .await
+            .expect_err("should be Err");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Model not loaded: "),
+            "expected 'Model not loaded' with a cause, got: {msg}"
         );
     }
 
     #[tokio::test]
     async fn transcribe_without_model_returns_not_loaded_error() {
         let err = test_provider()
+            .1
             .transcribe(&[0.0_f32; 100], 16_000)
             .await
             .expect_err("should be Err");
@@ -237,6 +327,7 @@ mod tests {
     #[tokio::test]
     async fn transcribe_rejects_wrong_sample_rate() {
         let err = test_provider()
+            .1
             .transcribe(&[0.0_f32; 100], 44_100)
             .await
             .expect_err("should be Err");
@@ -250,6 +341,7 @@ mod tests {
     #[tokio::test]
     async fn transcribe_rejects_empty_audio() {
         let err = test_provider()
+            .1
             .transcribe(&[], 16_000)
             .await
             .expect_err("should be Err");
@@ -287,11 +379,12 @@ mod tests {
         let samples = transcribe_rs::audio::read_wav_samples(&wav).expect("read 16 kHz mono WAV");
 
         let load_start = Instant::now();
-        let provider = ParakeetProvider::new(parent).expect("load provider");
+        let provider = ParakeetProvider::new(parent);
         let load_time = load_start.elapsed();
         assert!(
             provider.model_loaded(),
-            "model should load from {model_dir:?}"
+            "model should load from {model_dir:?}: {:?}",
+            provider.load_error
         );
 
         let result = provider
